@@ -1,5 +1,5 @@
-flask
-gunicorn
-pyTelegramBotAPI
+telebot
 yfinance
 google-generativeai
+Flask
+pandas
