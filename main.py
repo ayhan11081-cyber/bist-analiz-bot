@@ -12,7 +12,7 @@ TOKEN = os.environ.get("TELEGRAM_TOKEN")
 API_KEY = os.environ.get("GEMINI_API_KEY")
 ID = "1568398578"
 
-# Model Ayarları (Hata almamak için 'gemini-1.5-flash' kullandık)
+# Model Ayarı (Düzeltildi: 'gemini-1.5-flash' olarak güncellendi)
 genai.configure(api_key=API_KEY)
 model = genai.GenerativeModel('gemini-1.5-flash') 
 bot = telebot.TeleBot(TOKEN)
@@ -60,8 +60,7 @@ def analiz_et(sembol):
         RSI: {rsi:.2f} (30 altı aşırı satım, 70 üstü aşırı alım)
         MACD: {macd:.4f}
         
-        Yukarıdaki teknik verilere bakarak; trend yönünü belirle, 
-        kısa ve net bir AL/SAT/BEKLE sinyali üret.
+        Bu verilere dayanarak; trend yönünü belirle, kısa ve net bir AL/SAT/BEKLE sinyali ver.
         """
         response = model.generate_content(prompt)
         return response.text
@@ -83,14 +82,14 @@ def tarama_komutu(message):
         bot.reply_to(message, "Hisseler listesi boş!")
         return
         
-    bot.reply_to(message, f"🚀 {len(hisseler)} hisse için analiz başlıyor...")
+    bot.reply_to(message, f"🚀 {len(hisseler)} hisse için teknik analiz başlıyor...")
     
     for hisse in hisseler:
         analiz = analiz_et(hisse)
         bot.send_message(ID, f"📊 **{hisse.replace('.IS', '')}**\n{analiz}")
-        time.sleep(2) 
+        time.sleep(2) # Telegram spam koruması için 2 saniye bekleme
 
-# 5. Ana Çalıştırma (Hata düzeltmeleri eklendi)
+# 5. Ana Çalıştırma (Kritik Düzeltmeler)
 if __name__ == "__main__":
     # Eski bağlantıları temizle (409 Conflict hatasını çözer)
     bot.remove_webhook()
