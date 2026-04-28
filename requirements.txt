@@ -1,7 +1,7 @@
-
 pyTelegramBotAPI
 yfinance
 google-generativeai>=0.8.0
 Flask
 pandas
+
 
