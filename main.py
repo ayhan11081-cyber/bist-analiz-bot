@@ -9,24 +9,13 @@ API_KEY = os.environ.get("GEMINI_API_KEY", "").strip()
 RENDER_URL = "https://bist-analiz-bot-3z19.onrender.com"
 
 bot = telebot.TeleBot(TOKEN, threaded=False)
+
+# Google AI Konfigürasyonu
 genai.configure(api_key=API_KEY)
 
 app = Flask(__name__)
 
-# ÇALIŞAN MODELİ OTOMATİK BULAN FONKSİYON
-def get_model():
-    try:
-        # Google'dan sizin için aktif olan modelleri listelemesini istiyoruz
-        for m in genai.list_models():
-            if 'generateContent' in m.supported_generation_methods:
-                # 1.5 flash varsa onu seç, yoksa ilk bulduğun çalışan modeli ver
-                if 'gemini-1.5-flash' in m.name:
-                    return genai.GenerativeModel(m.name)
-        return genai.GenerativeModel('gemini-pro') # Yedek plan
-    except:
-        return genai.GenerativeModel('models/gemini-1.5-flash')
-
-# Webhook rotası
+# --- WEBHOOK GÜVENLİĞİ ---
 @app.route(f'/{TOKEN}', methods=['POST'])
 def webhook():
     json_string = request.get_data().decode('utf-8')
@@ -34,22 +23,39 @@ def webhook():
     bot.process_new_updates([update])
     return "OK", 200
 
-# MESAJ İŞLEME
+# --- MESAJ İŞLEME (EN GARANTİ YÖNTEM) ---
 @bot.message_handler(func=lambda message: True)
 def handle_message(message):
     try:
-        # Her mesajda çalışan modeli tazeleyerek soruyoruz
-        current_model = get_model()
-        response = current_model.generate_content(message.text)
-        bot.reply_to(message, response.text)
+        # 'models/' ön ekini kaldırarak en kararlı ismi kullanıyoruz
+        model = genai.GenerativeModel('gemini-1.5-flash')
+        response = model.generate_content(message.text)
+        
+        if response.text:
+            bot.reply_to(message, response.text)
+        else:
+            bot.reply_to(message, "Ayhan Bey, model cevap üretemedi. Lütfen soruyu değiştirin.")
+            
     except Exception as e:
-        bot.reply_to(message, f"Sistem Notu: {str(e)}")
+        error_msg = str(e)
+        if "404" in error_msg:
+            # Eğer hala 404 verirse, alternatif ismi dene
+            try:
+                model = genai.GenerativeModel('gemini-pro')
+                response = model.generate_content(message.text)
+                bot.reply_to(message, response.text)
+            except:
+                bot.reply_to(message, "Model isim hatası: Google bu ismi kabul etmiyor.")
+        elif "429" in error_msg:
+            bot.reply_to(message, "Ayhan Bey, ücretsiz kullanım limitiniz dolmuş. Biraz bekleyelim.")
+        else:
+            bot.reply_to(message, f"Sistem hatası: {error_msg}")
 
 @app.route('/')
 def home():
-    return "BOT AKTIF"
+    return "SİSTEM AKTİF"
 
-# Webhook'u tazele
+# Webhook ayarlarını tazele
 bot.remove_webhook()
 bot.set_webhook(url=f"{RENDER_URL}/{TOKEN}")
 
