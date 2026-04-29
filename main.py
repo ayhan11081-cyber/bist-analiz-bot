@@ -2,7 +2,6 @@ import os
 import telebot
 import requests
 import yfinance as yf
-import pandas as pd
 from flask import Flask, request
 
 # AYARLAR
@@ -13,55 +12,56 @@ RENDER_URL = "https://bist-analiz-bot-3z19.onrender.com"
 bot = telebot.TeleBot(TOKEN, threaded=False)
 app = Flask(__name__)
 
-# --- OPTİMA ROBOT TARAMA MOTORU ---
 def borsa_taramasi():
-    # Örnek olarak BIST'ten önemli birkaç hisse (Siz listeyi büyütebilirsiniz)
-    semboller = ["THYAO.IS", "ASELS.IS", "EREGL.IS", "KRDMD.IS", "SISE.IS", "SASANI.IS", "HEKTS.IS"]
-    bulunanlar = []
+    # İlk aşamada motoru yormamak için lokomotif hisseler
+    hisseler = ["THYAO.IS", "ASELS.IS", "EREGL.IS", "KRDMD.IS", "SISE.IS", "BIMAS.IS", "AKBNK.IS"]
+    rapor = ""
     
-    for sembol in semboller:
+    for s in hisseler:
         try:
-            hisse = yf.download(sembol, period="14d", interval="1d", progress=False)
-            if hisse.empty: continue
+            # Son 5 günlük veriyi çek
+            data = yf.download(s, period="5d", interval="1d", progress=False)
+            if data.empty: continue
             
-            # Basit teknik hesaplama (RSI mantığı)
-            kapanis = hisse['Close'].iloc[-1]
-            onceki_kapanis = hisse['Close'].iloc[-2]
-            degisim = ((kapanis - onceki_kapanis) / onceki_kapanis) * 100
+            son_fiyat = data['Close'].iloc[-1]
+            degisim = ((data['Close'].iloc[-1] - data['Close'].iloc[-2]) / data['Close'].iloc[-2]) * 100
             
-            # Sinyal kriteri: Hacim artışı ve pozitif kapanış
-            if degisim > 2: # %2'den fazla yükselenleri "takibe değer" sayalım
-                bulunanlar.append(f"🚀 {sembol}: %{degisim:.2f} yükselişle dikkat çekiyor.")
+            # Sadece pozitif olanları rapora ekle
+            if degisim > 0:
+                rapor += f"{s}: Fiyat {son_fiyat:.2f}, Günlük Değişim %{degisim:.2f}\n"
         except:
             continue
-    
-    return "\n".join(bulunanlar) if bulunanlar else "Şu an radara takılan güçlü bir sinyal yok."
+    return rapor if rapor else "Şu an pozitif bir sinyal yakalanamadı."
 
-def ask_groq(user_message):
+def ask_groq(rapor_verisi):
     url = "https://api.groq.com/openai/v1/chat/completions"
     headers = {"Authorization": f"Bearer {GROQ_KEY}", "Content-Type": "application/json"}
     
-    system_prompt = "Sen uzman bir BIST analistisin. Optima Robot'un bulduğu verileri yorumla."
+    # Bota kesin talimat: "Kullanıcıya soru sorma, veriyi yorumla!"
+    prompt = f"Aşağıdaki borsa verilerini teknik bir analist gözüyle yorumla. Patlama potansiyeli olanları seç: \n{rapor_verisi}"
+    
     data = {
-        "model": "llama-3.1-8b-instant", 
-        "messages": [{"role": "system", "content": system_prompt}, {"role": "user", "content": user_message}]
+        "model": "llama-3.1-8b-instant",
+        "messages": [
+            {"role": "system", "content": "Sen bir BIST analiz robotusun. Veri aldığında analiz yaparsın, soru sormazsın."},
+            {"role": "user", "content": prompt}
+        ]
     }
     
     response = requests.post(url, headers=headers, json=data, timeout=20)
     return response.json()['choices'][0]['message']['content']
 
 @bot.message_handler(commands=['tara'])
-def start_scan(message):
-    bot.reply_to(message, "Optima Robot taramaya başladı, 422 hisse süzülüyor... Lütfen bekleyin.")
-    sonuclar = borsa_taramasi()
-    # Sonuçları Groq'a yorumlatıyoruz
-    analiz = ask_groq(f"Şu tarama sonuçlarını analiz et ve bana patlama ihtimali olanları söyle: {sonuclar}")
+def handle_tara(message):
+    bot.reply_to(message, "Optima Robot çalışıyor, BIST verileri çekiliyor... Lütfen bekleyin Ayhan Bey.")
+    veriler = borsa_taramasi()
+    analiz = ask_groq(veriler)
     bot.send_message(message.chat.id, analiz)
 
 @bot.message_handler(func=lambda message: True)
-def handle_all(message):
-    answer = ask_groq(message.text)
-    bot.reply_to(message, answer)
+def handle_chat(message):
+    # Normal mesaj yazarsanız sadece sohbet eder
+    bot.reply_to(message, "Ayhan Bey, analiz yapmamı isterseniz lütfen /tara komutunu kullanın.")
 
 @app.route(f'/{TOKEN}', methods=['POST'])
 def webhook():
