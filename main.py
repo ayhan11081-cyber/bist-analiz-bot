@@ -12,7 +12,6 @@ bot = telebot.TeleBot(TOKEN, threaded=False)
 app = Flask(__name__)
 
 def ask_groq(user_message):
-    """Kütüphane kullanmadan doğrudan Groq API'sine bağlanır"""
     url = "https://api.groq.com/openai/v1/chat/completions"
     headers = {
         "Authorization": f"Bearer {GROQ_KEY}",
@@ -22,29 +21,39 @@ def ask_groq(user_message):
         "model": "llama3-8b-8192",
         "messages": [{"role": "user", "content": user_message}]
     }
-    # Doğrudan istek atıyoruz, kütüphane çakışması riski sıfır
-    response = requests.post(url, headers=headers, json=data, timeout=20)
-    return response.json()['choices'][0]['message']['content']
+    
+    try:
+        response = requests.post(url, headers=headers, json=data, timeout=20)
+        result = response.json()
+        
+        # CEVAP KONTROLÜ
+        if 'choices' in result and len(result['choices']) > 0:
+            return result['choices'][0]['message']['content']
+        elif 'error' in result:
+            return f"Groq Hatası: {result['error']['message']}"
+        else:
+            return f"Beklenmedik Yanıt Formatı: {str(result)}"
+            
+    except Exception as e:
+        return f"Bağlantı Hatası: {str(e)}"
 
 @app.route(f'/{TOKEN}', methods=['POST'])
 def webhook():
-    json_string = request.get_data().decode('utf-8')
-    update = telebot.types.Update.de_json(json_string)
-    bot.process_new_updates([update])
-    return "OK", 200
+    if request.headers.get('content-type') == 'application/json':
+        json_string = request.get_data().decode('utf-8')
+        update = telebot.types.Update.de_json(json_string)
+        bot.process_new_updates([update])
+        return "OK", 200
+    return "Error", 403
 
 @bot.message_handler(func=lambda message: True)
 def handle_message(message):
-    try:
-        # Mesajı Groq'a gönder
-        answer = ask_groq(message.text)
-        bot.reply_to(message, answer)
-    except Exception as e:
-        bot.reply_to(message, f"Ayhan Bey, bir bağlantı hatası oldu ama çözmeye çalışıyorum: {str(e)}")
+    answer = ask_groq(message.text)
+    bot.reply_to(message, answer)
 
 @app.route('/')
 def home():
-    return "SİSTEM YALIN MODDA AKTİF"
+    return "SİSTEM İZLEMEDE"
 
 if __name__ == "__main__":
     bot.remove_webhook()
