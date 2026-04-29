@@ -1,5 +1,5 @@
-pyTelegramBotAPI
-Flask
-gunicorn
-google-generativeai
+pyTelegramBotAPI==4.12.0
+Flask==2.3.2
+gunicorn==20.1.0
+google-generativeai==0.5.2
 
