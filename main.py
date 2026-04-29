@@ -17,25 +17,28 @@ def ask_groq(user_message):
         "Authorization": f"Bearer {GROQ_KEY}",
         "Content-Type": "application/json"
     }
+    
+    # Bota "Sen bir Borsa Analistisin" talimatı veriyoruz
+    system_prompt = (
+        "Sen deneyimli bir BIST analistisin. Kullanıcı sana hisse verisi sorduğunda; "
+        "hacim artışı, RSI ve hareketli ortalamaları (MA) teknik olarak yorumla. "
+        "Spekülatif yorumdan kaçın, veriye odaklan. Katılım endeksi kriterlerini hatırla."
+    )
+    
     data = {
-        # En stabil ve sorunsuz model ismi budur:
         "model": "llama-3.1-8b-instant", 
-        "messages": [{"role": "user", "content": user_message}]
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_message}
+        ]
     }
     
     try:
         response = requests.post(url, headers=headers, json=data, timeout=20)
         result = response.json()
-        
-        if 'choices' in result and len(result['choices']) > 0:
-            return result['choices'][0]['message']['content']
-        elif 'error' in result:
-            # Hatayı daha detaylı görelim
-            return f"Sistem Notu: {result['error']['message']}"
-        else:
-            return "Yanıt işlenemedi, lütfen tekrar deneyin."
+        return result['choices'][0]['message']['content']
     except Exception as e:
-        return f"Bağlantı hatası: {str(e)}"
+        return f"Analiz Hatası: {str(e)}"
 
 @app.route(f'/{TOKEN}', methods=['POST'])
 def webhook():
@@ -46,12 +49,13 @@ def webhook():
 
 @bot.message_handler(func=lambda message: True)
 def handle_message(message):
+    # Kullanıcıdan gelen mesajı "Analiz Et" komutuyla birleştiriyoruz
     answer = ask_groq(message.text)
     bot.reply_to(message, answer)
 
 @app.route('/')
 def home():
-    return "BOT GÜNCEL VE AKTİF"
+    return "ANALİZ BOTU YAYINDA"
 
 if __name__ == "__main__":
     bot.remove_webhook()
