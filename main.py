@@ -15,71 +15,71 @@ app = Flask(__name__)
 
 def get_hisse_listesi():
     try:
-        r = requests.get(HİSSE_DOSYA_URL)
+        r = requests.get(HİSSE_DOSYA_URL, timeout=10)
         if r.status_code == 200:
             lines = r.text.splitlines()
-            # TAM LİSTE: Herhangi bir kısıtlama olmadan tüm hisseleri alıyoruz
-            return [line.strip().upper() + ".IS" for line in lines if line.strip()]
-    except Exception as e:
-        return ["THYAO.IS", "ASELS.IS", "EREGL.IS"]
+            # Gereksiz boşlukları ve karakterleri temizle
+            return [line.strip().upper() + ".IS" for line in lines if len(line.strip()) > 0]
+        return []
+    except:
+        return []
 
 def borsa_taramasi():
     semboller = get_hisse_listesi()
-    bulgular = []
-    
-    # 422 hisseyi hızlıca indiriyoruz
-    # threads=True sayesinde tüm hisseler tek tek değil, gruplar halinde iner
-    data_all = yf.download(semboller, period="2d", interval="1d", progress=False, threads=True)
-    
-    for s in semboller:
-        try:
-            # Her hissenin son fiyat ve değişimini kontrol et
-            hisse_data = data_all['Close'][s]
-            if hisse_data.isnull().values.any(): continue
-            
-            son_fiyat = float(hisse_data.iloc[-1])
-            onceki_fiyat = float(hisse_data.iloc[-2])
-            degisim = ((son_fiyat - onceki_fiyat) / onceki_fiyat) * 100
-            
-            # SİNYAL KRİTERİ: %2 ve üzeri yükselenleri "radara girdi" sayalım
-            if degisim > 2.0:
-                bulgular.append(f"{s}: %{degisim:.2f} 📈")
-        except:
-            continue
-            
-    # Sadece en çok yükselen ilk 15 hisseyi Groq'a gönderelim (limit aşmamak için)
-    return "\n".join(bulgular[:15]) if bulgular else "Bugün listede %2 üzeri hareket eden hisse bulunamadı."
+    if not semboller:
+        return "HATA: GitHub'daki hisse listesi okunamadı veya dosya boş."
 
-def ask_groq(analiz_verisi):
-    url = "https://api.groq.com/openai/v1/chat/completions"
-    headers = {"Authorization": f"Bearer {GROQ_KEY}", "Content-Type": "application/json"}
-    
-    prompt = (
-        "Sen Ayhan Bey'in stratejik borsa danışmanısın. Aşağıdaki hisse hareketlerini "
-        "bir mühendis titizliğiyle yorumla. Hangi sektörde hareketlenme var, Ayhan Bey yarın "
-        "sabah neye dikkat etmeli? Eğitim amaçlı bir teknik analiz tüyosu ile bitir."
-    )
-    
-    data = {
-        "model": "llama-3.1-8b-instant",
-        "messages": [
-            {"role": "system", "content": prompt},
-            {"role": "user", "content": f"Radara takılan hareketli hisseler:\n{analiz_verisi}"}
-        ]
-    }
-    
     try:
-        r = requests.post(url, headers=headers, json=data, timeout=30)
-        return r.json()['choices'][0]['message']['content']
-    except:
-        return "Bağlantı yoğunluğu nedeniyle analiz gecikti, lütfen bir dakika sonra tekrar deneyin."
+        # 422 hisseyi daha küçük bir veri paketiyle (period=2d) hızlıca çekiyoruz
+        # group_by='ticker' ekleyerek veriyi daha düzenli alıyoruz
+        data = yf.download(semboller, period="2d", interval="1d", progress=False, threads=True, group_by='ticker')
+        
+        bulgular = []
+        for s in semboller:
+            try:
+                # Verinin gelip gelmediğini kontrol et
+                hisse_data = data[s]
+                if hisse_data.empty: continue
+                
+                kapanis = hisse_data['Close'].iloc[-1]
+                onceki = hisse_data['Close'].iloc[-2]
+                degisim = ((kapanis - onceki) / onceki) * 100
+                
+                # Kriter: %2'den fazla artanları yakala
+                if degisim > 2.0:
+                    bulgular.append(f"{s.replace('.IS','')}: %{degisim:.2f}")
+            except:
+                continue
+        
+        return "\n".join(bulgular) if bulgular else "Tarama tamamlandı ama %2 üzeri yükselen hisse bulunamadı."
+    except Exception as e:
+        return f"Tarama sırasında hata oluştu: {str(e)}"
 
 @bot.message_handler(commands=['tara', 'Tara'])
 def handle_tara(message):
-    bot.reply_to(message, f"🚀 Optima Robot 422 hisseyi taramaya başladı... Lütfen bekleyin Ayhan Bey.")
+    sent_msg = bot.reply_to(message, "⚙️ Optima Robot 422 hisseyi süzüyor, bu işlem 15-20 saniye sürebilir...")
+    
     veriler = borsa_taramasi()
-    analiz = ask_groq(veriler)
-    bot.send_message(message.chat.id, f"🎯 **422 HİSSE TARAMA SONUCU & EĞİTİM**\n\n{analiz}")
+    
+    # Veriler geldiyse Groq'a gönderip analiz ettiriyoruz
+    if "HATA" in veriler or "bulunamadı" in veriler:
+        bot.edit_message_text(veriler, message.chat.id, sent_msg.message_id)
+    else:
+        url = "https://api.groq.com/openai/v1/chat/completions"
+        headers = {"Authorization": f"Bearer {GROQ_KEY}", "Content-Type": "application/json"}
+        prompt = f"Şu yükselen hisse listesini teknik analist olarak yorumla ve Ayhan Bey'e yarın için tüyo ver:\n{veriler}"
+        
+        data = {
+            "model": "llama-3.1-8b-instant",
+            "messages": [{"role": "system", "content": "Sen bir BIST uzmanısın."}, {"role": "user", "content": prompt}]
+        }
+        
+        try:
+            r = requests.post(url, headers=headers, json=data, timeout=20)
+            analiz = r.json()['choices'][0]['message']['content']
+            bot.send_message(message.chat.id, f"🎯 **ANALİZ RAPORU**\n\n{analiz}")
+        except:
+            bot.send_message(message.chat.id, f"Veriler çekildi ama analiz motoru (Groq) meşgul. Ham veriler:\n{veriler}")
 
 @app.route(f'/{TOKEN}', methods=['POST'])
 def webhook():
