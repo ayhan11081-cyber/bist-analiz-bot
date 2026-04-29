@@ -18,7 +18,8 @@ def ask_groq(user_message):
         "Content-Type": "application/json"
     }
     data = {
-        "model": "llama3-8b-8192",
+        # En güncel ve güçlü modeli tanımlıyoruz
+        "model": "llama-3.3-70b-specdec", 
         "messages": [{"role": "user", "content": user_message}]
     }
     
@@ -26,25 +27,21 @@ def ask_groq(user_message):
         response = requests.post(url, headers=headers, json=data, timeout=20)
         result = response.json()
         
-        # CEVAP KONTROLÜ
         if 'choices' in result and len(result['choices']) > 0:
             return result['choices'][0]['message']['content']
         elif 'error' in result:
-            return f"Groq Hatası: {result['error']['message']}"
+            return f"Sistem Notu (Groq): {result['error']['message']}"
         else:
-            return f"Beklenmedik Yanıt Formatı: {str(result)}"
-            
+            return "Yanıt alınamadı, lütfen tekrar deneyin."
     except Exception as e:
-        return f"Bağlantı Hatası: {str(e)}"
+        return f"Bağlantı hatası: {str(e)}"
 
 @app.route(f'/{TOKEN}', methods=['POST'])
 def webhook():
-    if request.headers.get('content-type') == 'application/json':
-        json_string = request.get_data().decode('utf-8')
-        update = telebot.types.Update.de_json(json_string)
-        bot.process_new_updates([update])
-        return "OK", 200
-    return "Error", 403
+    json_string = request.get_data().decode('utf-8')
+    update = telebot.types.Update.de_json(json_string)
+    bot.process_new_updates([update])
+    return "OK", 200
 
 @bot.message_handler(func=lambda message: True)
 def handle_message(message):
@@ -53,7 +50,7 @@ def handle_message(message):
 
 @app.route('/')
 def home():
-    return "SİSTEM İZLEMEDE"
+    return "BOT AKTIF - MODEL: LLAMA 3.3"
 
 if __name__ == "__main__":
     bot.remove_webhook()
