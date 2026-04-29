@@ -18,8 +18,8 @@ def ask_groq(user_message):
         "Content-Type": "application/json"
     }
     data = {
-        # En güncel ve güçlü modeli tanımlıyoruz
-        "model": "llama-3.3-70b-specdec", 
+        # En stabil ve sorunsuz model ismi budur:
+        "model": "llama-3.1-8b-instant", 
         "messages": [{"role": "user", "content": user_message}]
     }
     
@@ -30,9 +30,10 @@ def ask_groq(user_message):
         if 'choices' in result and len(result['choices']) > 0:
             return result['choices'][0]['message']['content']
         elif 'error' in result:
-            return f"Sistem Notu (Groq): {result['error']['message']}"
+            # Hatayı daha detaylı görelim
+            return f"Sistem Notu: {result['error']['message']}"
         else:
-            return "Yanıt alınamadı, lütfen tekrar deneyin."
+            return "Yanıt işlenemedi, lütfen tekrar deneyin."
     except Exception as e:
         return f"Bağlantı hatası: {str(e)}"
 
@@ -50,7 +51,7 @@ def handle_message(message):
 
 @app.route('/')
 def home():
-    return "BOT AKTIF - MODEL: LLAMA 3.3"
+    return "BOT GÜNCEL VE AKTİF"
 
 if __name__ == "__main__":
     bot.remove_webhook()
