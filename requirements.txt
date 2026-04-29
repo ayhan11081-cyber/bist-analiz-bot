@@ -3,5 +3,6 @@ Flask==2.3.2
 gunicorn==20.1.0
 google-generativeai==0.5.2
 setuptools
+packaging
 
 
