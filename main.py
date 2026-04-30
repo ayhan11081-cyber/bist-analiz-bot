@@ -1,66 +1,87 @@
 import os
 import telebot
+import requests
 import yfinance as yf
-import google.generativeai as genai
-import threading
-import time
-from flask import Flask
+from flask import Flask, request
 
-# 1. AYARLAR
-TOKEN = "8475111924:AAF6u6FsoVak73_YH3kA3LfQXLSuB6Zgy1w"
-ID = "1568398578"
+# AYARLAR (Render Environment Variables kısmından gelir)
+TOKEN = os.environ.get("TELEGRAM_TOKEN", "").strip()
+GROQ_KEY = os.environ.get("GROQ_API_KEY", "").strip()
+RENDER_URL = "https://bist-analiz-bot-3z19.onrender.com"
+HİSSE_DOSYA_URL = "https://raw.githubusercontent.com/ayhan11081-cyber/bist-analiz-bot/main/hisseler.txt"
 
-bot = telebot.TeleBot(TOKEN)
+bot = telebot.TeleBot(TOKEN, threaded=False)
 app = Flask(__name__)
 
-# 2. GEMINI HAZIRLIK
-api_key = os.environ.get("GEMINI_API_KEY")
-genai.configure(api_key=api_key)
-model = genai.GenerativeModel('gemini-1.5-flash')
-
-@app.route('/')
-def home():
-    return "Bot Yayında."
-
-# 3. HİSSE LİSTESİ OKUMA
-def get_hisseler():
+def get_hisse_listesi():
     try:
-        with open('hisseler.txt', 'r', encoding='utf-8') as f:
-            return [line.strip() for line in f if line.strip()]
+        r = requests.get(HİSSE_DOSYA_URL, timeout=10)
+        if r.status_code == 200:
+            lines = r.text.splitlines()
+            # Dosyadaki hisseleri temizleyip BIST formatına (.IS) çeviriyoruz
+            return [line.strip().upper() + ".IS" for line in lines if len(line.strip()) > 0]
     except:
-        return ["THYAO.IS", "ASELS.IS"]
+        return []
+    return []
 
-# 4. ANALİZ MANTIĞI
-def analiz_et(symbol):
+def borsa_taramasi():
+    semboller = get_hisse_listesi()
+    if not semboller:
+        return "HATA: GitHub'daki hisseler.txt okunamadı. Depoyu Public yaptığınızdan emin olun."
+
     try:
-        ticker = yf.Ticker(symbol)
-        price = ticker.fast_info['last_price']
-        # Haber başlıklarını da alıp AI'a gönderiyoruz (Daha iyi analiz için)
-        haberler = "\n".join([n['title'] for n in ticker.news[:3]])
+        # 422 Hisseyi hızlıca indir
+        data = yf.download(semboller, period="2d", interval="1d", progress=False, threads=True)
         
-        prompt = f"""
-        Borsa hissesi {symbol} şu an {price} TL.
-        Son 3 haber başlığı: {haberler}
-        Bu verileri teknik ve temel analiz açısından yorumla. 
-        Yatırımcıya yol gösterici, kısa ve net bir değerlendirme yap.
-        """
-        response = model.generate_content(prompt)
-        return response.text
+        bulgular = []
+        for s in semboller:
+            try:
+                # Veri kontrolü
+                hisse_data = data['Close'][s]
+                if hisse_data.isnull().values.any(): continue
+                
+                degisim = ((hisse_data.iloc[-1] - hisse_data.iloc[-2]) / hisse_data.iloc[-2]) * 100
+                if degisim > 2.0: # %2 ve üzeri yükselenler
+                    bulgular.append(f"{s.replace('.IS','')}: %{degisim:.2f}")
+            except:
+                continue
+        
+        return "\n".join(bulgular[:20]) if bulgular else "Kriterlere uyan hisse bulunamadı."
     except Exception as e:
-        return f"Analiz yapılamadı: {e}"
+        return f"Tarama Hatası: {str(e)}"
 
-# 5. DÖNGÜ VE BOT
-def stock_bot():
-    bot.send_message(ID, "🚀 Bot Aktif ve İzlemede.")
-    while True:
-        hisseler = get_hisseler()
-        for hisse in hisseler:
-            mesaj = analiz_et(hisse)
-            bot.send_message(ID, f"📊 {hisse} Analizi:\n\n{mesaj}")
-            time.sleep(30) # Spam olmaması için bekleme
-        time.sleep(21600) # 6 saat bekle
+@bot.message_handler(commands=['tara', 'Tara'])
+def handle_tara(message):
+    bot.reply_to(message, "🔍 Optima Robot 422 hisseyi süzüyor Ayhan Bey...")
+    veriler = borsa_taramasi()
+    
+    if "HATA" in veriler:
+        bot.send_message(message.chat.id, veriler)
+    else:
+        url = "https://api.groq.com/openai/v1/chat/completions"
+        headers = {"Authorization": f"Bearer {GROQ_KEY}", "Content-Type": "application/json"}
+        prompt = f"Şu yükselen hisseleri teknik analist olarak yorumla ve yarın için bir tüyo ver:\n{veriler}"
+        
+        data = {
+            "model": "llama-3.1-8b-instant", # En stabil model
+            "messages": [{"role": "system", "content": "Sen bir BIST uzmanısın."}, {"role": "user", "content": prompt}]
+        }
+        
+        try:
+            r = requests.post(url, headers=headers, json=data, timeout=30)
+            analiz = r.json()['choices'][0]['message']['content']
+            bot.send_message(message.chat.id, f"🎯 **ANALİZ RAPORU**\n\n{analiz}")
+        except:
+            bot.send_message(message.chat.id, f"Analiz yapılamadı. Hareketli hisseler:\n{veriler}")
 
-# Başlatma
+@app.route(f'/{TOKEN}', methods=['POST'])
+def webhook():
+    json_string = request.get_data().decode('utf-8')
+    update = telebot.types.Update.de_json(json_string)
+    bot.process_new_updates([update])
+    return "OK", 200
+
 if __name__ == "__main__":
-    threading.Thread(target=stock_bot, daemon=True).start()
-    app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 10000)))
+    bot.remove_webhook()
+    bot.set_webhook(url=f"{RENDER_URL}/{TOKEN}")
+    app.run(host='0.0.0.0', port=int(os.environ.get("PORT", 10000)))
