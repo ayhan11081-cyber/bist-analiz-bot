@@ -10,76 +10,88 @@ TOKEN = os.environ.get("TELEGRAM_TOKEN", "").strip()
 GROQ_KEY = os.environ.get("GROQ_API_KEY", "").strip()
 RENDER_URL = "https://bist-analiz-bot-3z19.onrender.com"
 
-# Radara girecek ana hisse havuzu (Tam performans için optimize edildi)
+# Radara girecek en likit ve hareketli hisseler
 HISSES = ["THYAO","ASELS","EREGL","KCHOL","TUPRS","SISE","AKBNK","BIMAS","GARAN","SAHOL","ISCTR","YKBNK","ENKAI","EKGYO","PGSUS","FROTO","TOASO","ARCLK","PETKM","KRDMD","ASTOR","SASA","HEKTS","KONTR","SMRTG","EUPWR","ALARK","KOZAL","ODAS","TCELL","MIATK","REEDR","GUBRF"]
 
 bot = telebot.TeleBot(TOKEN, threaded=False)
 app = Flask(__name__)
 
-def analiz_motoru(df):
-    # RSI (Güç Endeksi)
-    delta = df['Close'].diff()
-    gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
-    loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
-    rsi = 100 - (100 / (1 + (gain / loss)))
-    
-    # MFI (Para Akışı Endeksi) - Para girişi burada belli olur
-    tp = (df['High'] + df['Low'] + df['Close']) / 3
-    mf = tp * df['Volume']
-    pos_mf = mf.where(tp > tp.shift(1), 0).rolling(window=14).sum()
-    neg_mf = mf.where(tp < tp.shift(1), 0).rolling(window=14).sum()
-    mfi = 100 - (100 / (1 + (pos_mf / neg_mf)))
-    
-    return rsi.iloc[-1], mfi.iloc[-1]
+def teknik_verileri_topla(df):
+    try:
+        # RSI (14 Günlük)
+        delta = df['Close'].diff()
+        gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
+        loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
+        rsi = 100 - (100 / (1 + (gain / loss)))
+        
+        # MFI (Para Akışı Endeksi)
+        tp = (df['High'] + df['Low'] + df['Close']) / 3
+        mf = tp * df['Volume']
+        pos_mf = mf.where(tp > tp.shift(1), 0).rolling(window=14).sum()
+        neg_mf = mf.where(tp < tp.shift(1), 0).rolling(window=14).sum()
+        mfi = 100 - (100 / (1 + (pos_mf / neg_mf)))
+        
+        return rsi.iloc[-1], mfi.iloc[-1]
+    except:
+        return 50.0, 50.0
 
 @bot.message_handler(commands=['tara', 'Tara'])
 def handle_tara(message):
-    bot.send_message(message.chat.id, "🎯 Ayhan Bey, sistem teknik verileri topluyor ve Groq AI ile makro analize geçiyor...")
+    status_msg = bot.send_message(message.chat.id, "🎯 Ayhan Bey, teknik veriler ve para akışı süzülüyor...")
     
-    teknik_ozet = []
     try:
+        # 1- Veri Çekme
         data = yf.download([s + ".IS" for s in HISSES], period="1mo", interval="1d", progress=False)
         
+        teknik_rapor_metni = "📊 **TEKNİK RADAR (RSI | MFI | HACİM)**\n"
+        ai_input_list = []
+
         for s in HISSES:
             try:
                 h_data = data.xs(s + ".IS", axis=1, level=1)
-                rsi, mfi = analiz_motoru(h_data)
+                rsi, mfi = teknik_verileri_topla(h_data)
+                vol_m = h_data['Volume'].iloc[-1] / 1_000_000
                 degisim = ((h_data['Close'].iloc[-1] - h_data['Close'].iloc[-2]) / h_data['Close'].iloc[-2]) * 100
                 
-                # Sadece teknik olarak "önemli" olanları AI'ya gönder (Para akışı veya momentum olanlar)
+                # Sadece dikkat çekenleri listele
                 if mfi > 60 or rsi > 60 or rsi < 35:
-                    teknik_ozet.append(f"{s}: Değişim %{degisim:.2f}, RSI: {rsi:.1f}, MFI: {mfi:.1f}")
+                    line = f"**{s}**: %{degisim:.1f} | RSI: {rsi:.0f} | MFI: {mfi:.0f} | {vol_m:.1f}M"
+                    teknik_rapor_metni += line + "\n"
+                    ai_input_list.append(line)
             except: continue
 
-        # --- GROQ AI DEVREYE GİRİYOR ---
-        if not teknik_ozet:
-            bot.send_message(message.chat.id, "Şu an teknik radara takılan bir hisse yok.")
-            return
+        # 2- Groq AI Analizi
+        if ai_input_list:
+            url = "https://api.groq.com/openai/v1/chat/completions"
+            headers = {"Authorization": f"Bearer {GROQ_KEY}", "Content-Type": "application/json"}
+            prompt = (
+                "Sen kıdemli bir borsa analistisin. Ayhan Bey için şu teknik listeyi yorumla. "
+                "Para akışı (MFI) yüksek olanlara dikkat çek. Makro verilerle (faiz, enflasyon, haberler) "
+                "harmanlayıp 'Al/Bekle' stratejisi oluştur. Çok teknik ve sonuç odaklı konuş."
+            )
+            payload = {
+                "model": "llama-3.1-70b-versatile",
+                "messages": [{"role": "system", "content": prompt}, {"role": "user", "content": "\n".join(ai_input_list)}]
+            }
+            
+            try:
+                r = requests.post(url, headers=headers, json=payload, timeout=25)
+                res_json = r.json()
+                # 'choices' hatasını önlemek için kontrol
+                if 'choices' in res_json:
+                    ai_analiz = res_json['choices'][0]['message']['content']
+                    final_msg = f"{teknik_rapor_metni}\n\n💡 **STRATEJİ RAPORU:**\n{ai_analiz}"
+                else:
+                    final_msg = f"{teknik_rapor_metni}\n\n⚠️ AI şu an meşgul, teknik tablo yukarıdadır."
+            except:
+                final_msg = f"{teknik_rapor_metni}\n\n⚠️ AI bağlantı hatası."
+        else:
+            final_msg = "Şu an radara takılan kritik bir değişim yok Ayhan Bey."
 
-        prompt = (
-            f"Sen Ayhan Bey'in uzman borsa danışmanısın. Aşağıdaki teknik verileri (RSI, MFI, Değişim) al. "
-            f"Buna Türkiye'deki makroekonomik durumu, faiz beklentilerini ve güncel piyasa haberlerini ekleyerek yorumla. "
-            f"Para girişi olan (yüksek MFI) hisseleri vurgula. Hangi hisseler kazandırabilir? "
-            f"Hangi durumlarda 'bekle' demeliyiz? Net, mühendisçe ve kar odaklı bir rapor sun."
-        )
-        
-        url = "https://api.groq.com/openai/v1/chat/completions"
-        headers = {"Authorization": f"Bearer {GROQ_KEY}", "Content-Type": "application/json"}
-        payload = {
-            "model": "llama-3.1-70b-versatile", # Daha akıllı model
-            "messages": [
-                {"role": "system", "content": prompt},
-                {"role": "user", "content": f"Teknik Veri Listesi:\n" + "\n".join(teknik_ozet)}
-            ],
-            "temperature": 0.5
-        }
-
-        r = requests.post(url, headers=headers, json=payload, timeout=40)
-        ai_cevap = r.json()['choices'][0]['message']['content']
-        bot.send_message(message.chat.id, f"📈 **STRATEJİK PİYASA RAPORU**\n\n{ai_cevap}")
+        bot.edit_message_text(final_msg, message.chat.id, status_msg.message_id, parse_mode="Markdown")
 
     except Exception as e:
-        bot.send_message(message.chat.id, f"Sistemde bir aksama oldu Ayhan Bey: {str(e)}")
+        bot.send_message(message.chat.id, f"Sistem hatası: {str(e)}")
 
 @app.route(f'/{TOKEN}', methods=['POST'])
 def webhook():
