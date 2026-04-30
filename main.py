@@ -8,6 +8,8 @@ from flask import Flask, request
 TOKEN = os.environ.get("TELEGRAM_TOKEN", "").strip()
 GROQ_KEY = os.environ.get("GROQ_API_KEY", "").strip()
 RENDER_URL = "https://bist-analiz-bot-3z19.onrender.com"
+
+# GitHub Linkleri - Sizin deponuz için optimize edildi
 HİSSE_DOSYA_URL = "https://raw.githubusercontent.com/ayhan11081-cyber/bist-analiz-bot/main/hisseler.txt"
 
 bot = telebot.TeleBot(TOKEN, threaded=False)
@@ -15,60 +17,68 @@ app = Flask(__name__)
 
 def get_hisse_listesi():
     try:
-        r = requests.get(HİSSE_DOSYA_URL, timeout=10)
+        r = requests.get(HİSSE_DOSYA_URL, timeout=15)
         if r.status_code == 200:
             lines = r.text.splitlines()
-            # Temiz liste oluştur
+            # 422 hisseyi temizle ve sonuna .IS ekle
             return [line.strip().upper() + ".IS" for line in lines if len(line.strip()) > 0]
+        else:
+            return []
     except:
-        pass
-    return []
+        return []
 
 def borsa_taramasi():
     semboller = get_hisse_listesi()
     if not semboller:
-        return "ERROR: GitHub dosyası henüz erişilebilir değil. Lütfen birkaç dakika bekleyin."
+        return "ERROR: GitHub dosyasına hala ulaşılamıyor. Lütfen deponun PUBLIC olduğundan emin olun."
 
     try:
-        # 422 hisseyi hızlıca çekmek için threads=True ve küçük period
+        # HIZLI TARAMA: 422 hisseyi tek seferde indiriyoruz
         data = yf.download(semboller, period="2d", interval="1d", progress=False, threads=True)
         
         bulgular = []
+        # MultiIndex veri yapısını kontrol ederek tara
         for s in semboller:
             try:
-                # Veri kontrolü
-                c = data['Close'][s]
-                if c.isnull().values.any(): continue
+                # Verinin varlığını kontrol et
+                if s not in data['Close']: continue
+                hisse_c = data['Close'][s]
+                if hisse_c.isnull().values.any(): continue
                 
-                degisim = ((c.iloc[-1] - c.iloc[-2]) / c.iloc[-2]) * 100
+                degisim = ((hisse_c.iloc[-1] - hisse_c.iloc[-2]) / hisse_c.iloc[-2]) * 100
                 
-                # %2 ve üzeri artışları yakala
+                # SİNYAL: %2 ve üzeri artanlar
                 if degisim > 2.0:
                     bulgular.append(f"{s.replace('.IS','')}: %{degisim:.2f}")
             except:
                 continue
         
-        return "\n".join(bulgular[:15]) if bulgular else "Bugün kriterlere uyan hisse bulunamadı."
+        return "\n".join(bulgular[:15]) if bulgular else "Bugün listede %2 üzeri yükselen hisse bulunamadı."
     except Exception as e:
-        return f"Tarama Hatası: {str(e)}"
+        return f"Tarama Hatası: Veriler işlenirken bir sorun oluştu."
 
 @bot.message_handler(commands=['tara', 'Tara'])
 def handle_tara(message):
-    bot.reply_to(message, "⚙️ Optima Robot 422 hisseyi süzüyor Ayhan Bey... Lütfen 20-30 saniye bekleyin.")
+    bot.reply_to(message, "🚀 Optima Robot 422 hisseyi süzüyor... Ayhan Bey, analiz birazdan hazır olacak.")
     veriler = borsa_taramasi()
     
     if "ERROR" in veriler:
         bot.send_message(message.chat.id, veriler)
     else:
-        # GÜNCEL GROQ MODELİ: llama-3.3-70b-versatile
+        # Groq Analizi (Güncel Model)
         url = "https://api.groq.com/openai/v1/chat/completions"
         headers = {"Authorization": f"Bearer {GROQ_KEY}", "Content-Type": "application/json"}
-        prompt = f"Şu yükselen BIST hisselerini bir yatırım eğitmeni titizliğiyle analiz et ve Ayhan Bey'e yarın için teknik bir ders vererek yorumla:\n{veriler}"
+        
+        # Sizi yatırım konusunda eğitecek olan kısım burası
+        prompt = (
+            f"Aşağıdaki yükselen hisseleri bir uzman gibi yorumla: \n{veriler}\n\n"
+            "Ayhan Bey'e yarın için stratejik bir tavsiye ver ve teknik bir borsa tüyosu ekle."
+        )
         
         data = {
-            "model": "llama-3.3-70b-versatile",
+            "model": "llama-3.1-8b-instant", # En sağlam ve güncel model
             "messages": [
-                {"role": "system", "content": "Sen Ayhan Bey'in özel borsa danışmanı ve eğitmenisin."},
+                {"role": "system", "content": "Sen Ayhan Bey'in özel borsa eğitmenisin. Analizlerin kısa, öz ve mühendis titizliğinde olsun."},
                 {"role": "user", "content": prompt}
             ]
         }
@@ -76,9 +86,9 @@ def handle_tara(message):
         try:
             r = requests.post(url, headers=headers, json=data, timeout=30)
             analiz = r.json()['choices'][0]['message']['content']
-            bot.send_message(message.chat.id, f"🎯 **ANALİZ VE EĞİTİM RAPORU**\n\n{analiz}")
+            bot.send_message(message.chat.id, f"📊 **OPTIMA ROBOT ANALİZİ**\n\n{analiz}")
         except:
-            bot.send_message(message.chat.id, f"Sinyal veren hisseler (Analiz motoru meşgul):\n{veriler}")
+            bot.send_message(message.chat.id, f"Sinyal veren hisseler:\n{veriler}")
 
 @app.route(f'/{TOKEN}', methods=['POST'])
 def webhook():
