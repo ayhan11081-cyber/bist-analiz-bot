@@ -9,7 +9,7 @@ TOKEN = os.environ.get("TELEGRAM_TOKEN", "").strip()
 GROQ_KEY = os.environ.get("GROQ_API_KEY", "").strip()
 RENDER_URL = "https://bist-analiz-bot-3z19.onrender.com"
 
-# AYHAN BEY İÇİN TÜM BIST LİSTESİ (450+ HİSSE)
+# TÜM BIST LİSTESİ (Sizin için ekledim Ayhan Bey)
 HISSES = [
     "A1CAP","ACSEL","ADEL","ADESE","ADGYO","AEFES","AFYON","AGESA","AGHOL","AGROT","AHGAZ","AKBNK","AKCNS","AKENR","AKFGY","AKFYE","AKGRT","AKMGY","AKSA","AKSEN","AKSGY","AKYHO","ALARK","ALBRK","ALCAR","ALCTL","ALFAS","ALGYO","ALKA","ALKIM","ALLE","ALMAD","ALTNY","ALTIN","ANELE","ANGEN","ANHYT","ANSGR","ANTUR","APRE","ARASE","ARCLK","ARDYZ","ARENA","ARSAN","ARTMS","ASCEG","ASELS","ASGYO","ASTOR","ASUZU","ATAGY","ATAKP","ATATP","ATEKS","ATLAS","ATSGH","AVGYO","AVHOL","AVOD","AVTUR","AYCES","AYDEM","AYEN","AYGAZ","AZTEK",
     "BAGFS","BAKAB","BALAT","BANVT","BARMA","BASGZ","BASCM","BAYRK","BEGYO","BERA","BEYAZ","BFREN","BIENP","BIGCH","BIMAS","BINHO","BIOEN","BIZIM","BJKAS","BLCYT","BMSCH","BMSTL","BNTAS","BOBET","BORLS","BORSK","BOSSA","BRISA","BRKSN","BRKVY","BRLSM","BRMEN","BRYAT","BSOKE","BTCIM","BUCIM","BURCE","BURVA","BVSAN","BYDNR",
@@ -41,56 +41,52 @@ bot = telebot.TeleBot(TOKEN, threaded=False)
 app = Flask(__name__)
 
 def borsa_taramasi():
-    semboller = [s + ".IS" for s in HISSES]
+    # Suffix kontrolü: .IS yoksa ekle
+    semboller = [s if s.endswith(".IS") else s + ".IS" for s in HISSES]
     try:
-        # Tüm hisseleri bir kerede indir (Süper hızlı mod)
         data = yf.download(semboller, period="2d", interval="1d", progress=False, threads=True)
         bulgular = []
-        
         for s in semboller:
             try:
                 if s not in data['Close']: continue
                 h_c = data['Close'][s]
                 if h_c.isnull().values.any(): continue
-                
                 degisim = ((h_c.iloc[-1] - h_c.iloc[-2]) / h_c.iloc[-2]) * 100
-                if degisim > 2.5: # %2.5 ve üzeri artanlar radara girsin
+                if degisim > 2.0:
                     bulgular.append(f"{s.replace('.IS','')}: %{degisim:.2f}")
             except: continue
-            
-        return "\n".join(bulgular[:25]) if bulgular else "Şu an radara takılan hareketli bir hisse yok Ayhan Bey."
+        return "\n".join(bulgular[:25]) if bulgular else "Hareketli hisse bulunamadı."
     except Exception as e:
         return f"Tarama hatası: {str(e)}"
 
 @bot.message_handler(commands=['tara', 'Tara'])
 def handle_tara(message):
-    bot.reply_to(message, f"🔍 Optima Robot {len(HISSES)} hisseyi Ayhan Bey için süzüyor...")
+    bot.reply_to(message, "🔍 Optima Robot Ayhan Bey için 450+ hisseyi süzüyor...")
     veriler = borsa_taramasi()
     
-    # GROQ - ANALİZ VE KOÇLUK MODU
+    # GROQ - SOHBET MODU
     url = "https://api.groq.com/openai/v1/chat/completions"
     headers = {"Authorization": f"Bearer {GROQ_KEY}", "Content-Type": "application/json"}
     
     prompt = (
-        "Sen Ayhan Bey'in özel borsa danışmanı ve dostusun. Verileri analiz et. "
-        "Bir mühendis titizliğiyle ama samimi bir akşam sohbeti havasında konuş. "
-        "Sektörlere değin, eğitim amaçlı bilgiler ver ve Ayhan Bey'e özel teknik tüyolar ekle."
+        "Sen borsa uzmanı ve Ayhan Bey'in dostusun. Verileri analiz et. "
+        "Samimi bir akşam sohbeti tadında yorumla, nedenlerini açıkla ve Ayhan Bey'e teknik bir tüyo ver."
     )
     
-    data = {
+    payload = {
         "model": "llama-3.1-8b-instant",
         "messages": [
             {"role": "system", "content": prompt},
-            {"role": "user", "content": f"Bugünkü hareketli hisseler:\n{veriler}"}
+            {"role": "user", "content": f"Hisse verileri:\n{veriler}"}
         ]
     }
     
     try:
-        r = requests.post(url, headers=headers, json=data, timeout=35)
+        r = requests.post(url, headers=headers, json=payload, timeout=30)
         analiz = r.json()['choices'][0]['message']['content']
         bot.send_message(message.chat.id, f"🎯 **OPTIMA AKŞAM SOHBETİ**\n\n{analiz}")
-    except:
-        bot.send_message(message.chat.id, f"AI meşgul ama veriler burada:\n{veriler}")
+    except Exception as e:
+        bot.send_message(message.chat.id, f"Hisseler:\n{veriler}\n\n(AI şu an cevap veremedi: {str(e)})")
 
 @app.route(f'/{TOKEN}', methods=['POST'])
 def webhook():
