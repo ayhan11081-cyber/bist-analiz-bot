@@ -8,62 +8,89 @@ from flask import Flask, request
 TOKEN = os.environ.get("TELEGRAM_TOKEN", "").strip()
 GROQ_KEY = os.environ.get("GROQ_API_KEY", "").strip()
 RENDER_URL = "https://bist-analiz-bot-3z19.onrender.com"
-HİSSE_DOSYA_URL = "https://raw.githubusercontent.com/ayhan11081-cyber/bist-analiz-bot/main/hisseler.txt"
+
+# AYHAN BEY İÇİN TÜM BIST LİSTESİ (450+ HİSSE)
+HISSES = [
+    "A1CAP","ACSEL","ADEL","ADESE","ADGYO","AEFES","AFYON","AGESA","AGHOL","AGROT","AHGAZ","AKBNK","AKCNS","AKENR","AKFGY","AKFYE","AKGRT","AKMGY","AKSA","AKSEN","AKSGY","AKYHO","ALARK","ALBRK","ALCAR","ALCTL","ALFAS","ALGYO","ALKA","ALKIM","ALLE","ALMAD","ALTNY","ALTIN","ANELE","ANGEN","ANHYT","ANSGR","ANTUR","APRE","ARASE","ARCLK","ARDYZ","ARENA","ARSAN","ARTMS","ASCEG","ASELS","ASGYO","ASTOR","ASUZU","ATAGY","ATAKP","ATATP","ATEKS","ATLAS","ATSGH","AVGYO","AVHOL","AVOD","AVTUR","AYCES","AYDEM","AYEN","AYGAZ","AZTEK",
+    "BAGFS","BAKAB","BALAT","BANVT","BARMA","BASGZ","BASCM","BAYRK","BEGYO","BERA","BEYAZ","BFREN","BIENP","BIGCH","BIMAS","BINHO","BIOEN","BIZIM","BJKAS","BLCYT","BMSCH","BMSTL","BNTAS","BOBET","BORLS","BORSK","BOSSA","BRISA","BRKSN","BRKVY","BRLSM","BRMEN","BRYAT","BSOKE","BTCIM","BUCIM","BURCE","BURVA","BVSAN","BYDNR",
+    "CANTE","CASA","CATES","CCOLA","CELHA","CEMAS","CEMTS","CEVNR","CIMSA","CLEBI","CONSE","COSMO","CRDFA","CUSAN","CVKMD","CWENE",
+    "DAGHL","DAGI","DAPGM","DARDL","DATATE","DGGYO","DGNMO","DIRIT","DITAS","DMSAS","DNISI","DOAS","DOCO","DOGUB","DOHOL","DOKTA","DURDO","DYOBY","DZGYO",
+    "EBEBK","ECILC","ECZYT","EDATA","EDIP","EGEEN","EGEPO","EGERV","EGPRO","EGSER","EKGYO","EKSUN","ELITE","EMKEL","ENERY","ENJSA","ENKAI","ENTRA","ERBOS","EREGL","ERSU","ESCAR","ESCOM","ESEN","ETILR","EUPWR","EUREN","EYGYO",
+    "FADE","FENER","FLAP","FMIZP","FONET","FORMT","FORTE","FRIGO","FROTO","FZLGY",
+    "GARAN","GARFA","GDUY","GEDIK","GEDZA","GENTS","GEREL","GESAN","GIPTA","GLBMD","GLCVY","GLRYH","GLYHO","GOKNR","GOLTS","GOODY","GOZDE","GRNYO","GRSEL","GSDDE","GSDHO","GUHRE","GUBRF","GWIND","GZNMI",
+    "HALKB","HATEK","HDFGS","HEDEF","HEKTS","HKTM","HLGYO","HRKET","HTTBT","HUBVC","HUNER","HURGZ",
+    "ICBCT","IDGYO","IEYHO","IHAAS","IHEVA","IHGZT","IHLAS","IHLGM","IHYAY","IMASM","INDES","INFO","INGRM","INTEM","INVEO","INVES","IPEKE","ISATR","ISBTR","ISCTR","ISFIN","ISGSY","ISGYO","ISMEN","ISSEN","ISYAT","ITTFH","IZENR","IZFAS","IZINV","IZMDC",
+    "JANTS",
+    "KAPLM","KARYE","KATMR","KAYSE","KCAER","KCHOL","KENT","KERVT","KFEIN","KGYO","KIMMR","KLGYO","KLMSN","KLRHO","KLSYN","KLYAS","KMEPU","KMPUR","KNFRT","KONTR","KONYA","KORDS","KOTON","KOZAL","KOZAA","KRDMA","KRDMB","KRDMD","KRGYO","KRONT","KRPLS","KRSTL","KRTEK","KSTUR","KTSKR","KUTPO","KUVVA","KUYAS","KZBGY","KZGYO",
+    "LIDFA","LIDER","LMKDC","LOGAS","LOGO","LUKSK",
+    "MAALT","MAGEN","MAKIM","MAKTK","MANAS","MARKA","MARTI","MAVI","MEDTR","MEGAP","MEGMT","MEPET","MERCN","MERKO","METRO","METUR","MHRGY","MIATK","MIPAZ","MNDRS","MNDTR","MOBTL","MOGAN","MPARK","MSGYO","MTRKS","MTRYO","MZHLD",
+    "NATEN","NETAS","NIBAS","NTHOL","NUGYO","NUHCM",
+    "OBAMS","ODAS","ONCSM","ORCAY","ORGE","ORMA","OSMEN","OSTIM","OTKAR","OYAKC","OYAYO","OYLUM",
+    "PAGYO","PAMEL","PAPIL","PARSN","PASEU","PATEK","PCILT","PEGYO","PEKGY","PENTA","PETKM","PETUN","PGSUS","PINSU","PKART","PKENT","PNLSN","PNSUT","POLHO","POLTK","PRDGS","PRKAB","PRKME","PRZMA","PSDTC","PSGYO",
+    "QUAGR",
+    "RALYH","RAYYS","REEDR","RNPOL","RODRG","RTALB","RUBNS","RYGYO","RYSAS",
+    "SAFKR","SAHOL","SAMAT","SANEL","SANFO","SANKO","SARKY","SASA","SAYAS","SDTTR","SEGYO","SEKFK","SEKUR","SELEC","SELGD","SELVA","SEYKM","SILVR","SISE","SKBNK","SKTAS","SMART","SMRTG","SNGYO","SNICA","SNKPA","SOKE","SOKM","SONME","SRVGY","SUMAS","SUNTK","SURGY","SUWEN",
+    "TABGD","TARKM","TATEN","TATGD","TAVHL","TCELL","TDGYO","TEKTU","TERA","TETMT","TEZOL","THYAO","TKFEN","TKNSA","TMPOL","TMSN","TNZTP","TOASO","TRCAS","TRGYO","TRILC","TSKB","TSPOR","TTKOM","TTRAK","TUCLK","TUKAS","TUPRS","TURSG","TUREX",
+    "UFUK","ULAS","ULKER","ULLAS","ULUFA","ULUSE","ULUUN","UMPAS","UNLU","USAK",
+    "VAKBN","VAKFN","VAKKO","VANGD","VBTYO","VERTU","VERUS","VESBE","VESTL","VKGYO","VKING",
+    "YAPRK","YAYLA","YBTAS","YEOTK","YESIL","YGGYO","YGYO","YIGIT","YKBNK","YONGA","YOTAS","YUNSA","YYLGD","YYAPI",
+    "ZEDUR","ZOREN","ZRGYO"
+]
 
 bot = telebot.TeleBot(TOKEN, threaded=False)
 app = Flask(__name__)
 
-def get_hisse_listesi():
-    try:
-        r = requests.get(HİSSE_DOSYA_URL, timeout=10)
-        if r.status_code == 200:
-            lines = r.text.splitlines()
-            return [line.strip().upper() + ".IS" for line in lines if len(line.strip()) > 0]
-    except:
-        return []
-    return []
-
 def borsa_taramasi():
-    semboller = get_hisse_listesi()
-    if not semboller:
-        return "HATA: GitHub'daki hisseler.txt okunamadı. Depoyu Public yaptığınızdan emin olun."
-
+    semboller = [s + ".IS" for s in HISSES]
     try:
+        # Tüm hisseleri bir kerede indir (Süper hızlı mod)
         data = yf.download(semboller, period="2d", interval="1d", progress=False, threads=True)
         bulgular = []
+        
         for s in semboller:
             try:
                 if s not in data['Close']: continue
-                hisse_data = data['Close'][s]
-                if hisse_data.isnull().values.any(): continue
-                degisim = ((hisse_data.iloc[-1] - hisse_data.iloc[-2]) / hisse_data.iloc[-2]) * 100
-                if degisim > 2.0:
+                h_c = data['Close'][s]
+                if h_c.isnull().values.any(): continue
+                
+                degisim = ((h_c.iloc[-1] - h_c.iloc[-2]) / h_c.iloc[-2]) * 100
+                if degisim > 2.5: # %2.5 ve üzeri artanlar radara girsin
                     bulgular.append(f"{s.replace('.IS','')}: %{degisim:.2f}")
             except: continue
-        return "\n".join(bulgular[:15]) if bulgular else "Hareketli hisse bulunamadı."
+            
+        return "\n".join(bulgular[:25]) if bulgular else "Şu an radara takılan hareketli bir hisse yok Ayhan Bey."
     except Exception as e:
-        return f"Tarama Hatası: {str(e)}"
+        return f"Tarama hatası: {str(e)}"
 
 @bot.message_handler(commands=['tara', 'Tara'])
 def handle_tara(message):
-    bot.reply_to(message, "🔍 Optima Robot 422 hisseyi süzüyor Ayhan Bey...")
+    bot.reply_to(message, f"🔍 Optima Robot {len(HISSES)} hisseyi Ayhan Bey için süzüyor...")
     veriler = borsa_taramasi()
     
+    # GROQ - ANALİZ VE KOÇLUK MODU
     url = "https://api.groq.com/openai/v1/chat/completions"
     headers = {"Authorization": f"Bearer {GROQ_KEY}", "Content-Type": "application/json"}
-    prompt = f"Şu yükselen hisseleri teknik analist olarak yorumla ve Ayhan Bey'e bir tüyo ver:\n{veriler}"
+    
+    prompt = (
+        "Sen Ayhan Bey'in özel borsa danışmanı ve dostusun. Verileri analiz et. "
+        "Bir mühendis titizliğiyle ama samimi bir akşam sohbeti havasında konuş. "
+        "Sektörlere değin, eğitim amaçlı bilgiler ver ve Ayhan Bey'e özel teknik tüyolar ekle."
+    )
     
     data = {
         "model": "llama-3.1-8b-instant",
-        "messages": [{"role": "system", "content": "Sen borsa uzmanısın."}, {"role": "user", "content": prompt}]
+        "messages": [
+            {"role": "system", "content": prompt},
+            {"role": "user", "content": f"Bugünkü hareketli hisseler:\n{veriler}"}
+        ]
     }
     
     try:
-        r = requests.post(url, headers=headers, json=data, timeout=20)
+        r = requests.post(url, headers=headers, json=data, timeout=35)
         analiz = r.json()['choices'][0]['message']['content']
-        bot.send_message(message.chat.id, f"🎯 **ANALİZ RAPORU**\n\n{analiz}")
+        bot.send_message(message.chat.id, f"🎯 **OPTIMA AKŞAM SOHBETİ**\n\n{analiz}")
     except:
-        bot.send_message(message.chat.id, f"Hisseler:\n{veriler}")
+        bot.send_message(message.chat.id, f"AI meşgul ama veriler burada:\n{veriler}")
 
 @app.route(f'/{TOKEN}', methods=['POST'])
 def webhook():
