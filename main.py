@@ -4,7 +4,7 @@ import requests
 import yfinance as yf
 from flask import Flask, request
 
-# AYARLAR (Render Environment Variables kısmından gelir)
+# AYARLAR
 TOKEN = os.environ.get("TELEGRAM_TOKEN", "").strip()
 GROQ_KEY = os.environ.get("GROQ_API_KEY", "").strip()
 RENDER_URL = "https://bist-analiz-bot-3z19.onrender.com"
@@ -18,7 +18,6 @@ def get_hisse_listesi():
         r = requests.get(HİSSE_DOSYA_URL, timeout=10)
         if r.status_code == 200:
             lines = r.text.splitlines()
-            # Dosyadaki hisseleri temizleyip BIST formatına (.IS) çeviriyoruz
             return [line.strip().upper() + ".IS" for line in lines if len(line.strip()) > 0]
     except:
         return []
@@ -30,23 +29,18 @@ def borsa_taramasi():
         return "HATA: GitHub'daki hisseler.txt okunamadı. Depoyu Public yaptığınızdan emin olun."
 
     try:
-        # 422 Hisseyi hızlıca indir
         data = yf.download(semboller, period="2d", interval="1d", progress=False, threads=True)
-        
         bulgular = []
         for s in semboller:
             try:
-                # Veri kontrolü
+                if s not in data['Close']: continue
                 hisse_data = data['Close'][s]
                 if hisse_data.isnull().values.any(): continue
-                
                 degisim = ((hisse_data.iloc[-1] - hisse_data.iloc[-2]) / hisse_data.iloc[-2]) * 100
-                if degisim > 2.0: # %2 ve üzeri yükselenler
+                if degisim > 2.0:
                     bulgular.append(f"{s.replace('.IS','')}: %{degisim:.2f}")
-            except:
-                continue
-        
-        return "\n".join(bulgular[:20]) if bulgular else "Kriterlere uyan hisse bulunamadı."
+            except: continue
+        return "\n".join(bulgular[:15]) if bulgular else "Hareketli hisse bulunamadı."
     except Exception as e:
         return f"Tarama Hatası: {str(e)}"
 
@@ -55,24 +49,21 @@ def handle_tara(message):
     bot.reply_to(message, "🔍 Optima Robot 422 hisseyi süzüyor Ayhan Bey...")
     veriler = borsa_taramasi()
     
-    if "HATA" in veriler:
-        bot.send_message(message.chat.id, veriler)
-    else:
-        url = "https://api.groq.com/openai/v1/chat/completions"
-        headers = {"Authorization": f"Bearer {GROQ_KEY}", "Content-Type": "application/json"}
-        prompt = f"Şu yükselen hisseleri teknik analist olarak yorumla ve yarın için bir tüyo ver:\n{veriler}"
-        
-        data = {
-            "model": "llama-3.1-8b-instant", # En stabil model
-            "messages": [{"role": "system", "content": "Sen bir BIST uzmanısın."}, {"role": "user", "content": prompt}]
-        }
-        
-        try:
-            r = requests.post(url, headers=headers, json=data, timeout=30)
-            analiz = r.json()['choices'][0]['message']['content']
-            bot.send_message(message.chat.id, f"🎯 **ANALİZ RAPORU**\n\n{analiz}")
-        except:
-            bot.send_message(message.chat.id, f"Analiz yapılamadı. Hareketli hisseler:\n{veriler}")
+    url = "https://api.groq.com/openai/v1/chat/completions"
+    headers = {"Authorization": f"Bearer {GROQ_KEY}", "Content-Type": "application/json"}
+    prompt = f"Şu yükselen hisseleri teknik analist olarak yorumla ve Ayhan Bey'e bir tüyo ver:\n{veriler}"
+    
+    data = {
+        "model": "llama-3.1-8b-instant",
+        "messages": [{"role": "system", "content": "Sen borsa uzmanısın."}, {"role": "user", "content": prompt}]
+    }
+    
+    try:
+        r = requests.post(url, headers=headers, json=data, timeout=20)
+        analiz = r.json()['choices'][0]['message']['content']
+        bot.send_message(message.chat.id, f"🎯 **ANALİZ RAPORU**\n\n{analiz}")
+    except:
+        bot.send_message(message.chat.id, f"Hisseler:\n{veriler}")
 
 @app.route(f'/{TOKEN}', methods=['POST'])
 def webhook():
