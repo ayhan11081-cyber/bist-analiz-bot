@@ -9,7 +9,7 @@ TOKEN = os.environ.get("TELEGRAM_TOKEN", "").strip()
 GROQ_KEY = os.environ.get("GROQ_API_KEY", "").strip()
 RENDER_URL = "https://bist-analiz-bot-3z19.onrender.com"
 
-# AYHAN BEY'İN GÜNCELLEDİĞİ GENİŞ LİSTE
+# AYHAN BEY'İN TAM LİSTESİ (Sorgu anında canlı kontrol edilecek)
 HISSES = [
     "THYAO", "ASELS", "EREGL", "KCHOL", "TUPRS", "SISE", "AKBNK", "BIMAS", "GARAN", "SAHOL",
     "ISCTR", "YKBNK", "ENKAI", "EKGYO", "PGSUS", "FROTO", "TOASO", "ARCLK", "PETKM", "KRDMD",
@@ -44,56 +44,60 @@ HISSES = [
 bot = telebot.TeleBot(TOKEN, threaded=False)
 app = Flask(__name__)
 
-def borsa_taramasi():
+def borsa_taramasi_anlik():
     semboller = [s + ".IS" for s in HISSES]
     try:
-        # Hızlı veri çekme (Son 5 gün)
-        data = yf.download(semboller, period="5d", interval="1d", progress=False, threads=True)
+        # 1 günlük veri üzerinden anlık momentum
+        data = yf.download(semboller, period="1d", interval="1m", progress=False, threads=True)
         bulgular = []
         
         for s in semboller:
             try:
                 if s not in data['Close']: continue
                 h_c = data['Close'][s].dropna()
-                if len(h_c) < 2: continue
+                if len(h_c) < 5: continue # Yeterli anlık veri olmalı
                 
-                degisim = ((h_c.iloc[-1] - h_c.iloc[-2]) / h_c.iloc[-2]) * 100
-                # Ayhan Bey, listeyi dolu tutmak için %1.5 üzerine çektim
-                if degisim > 1.5: 
+                # Açılıştan beri değişim
+                ilk_fiyat = h_c.iloc[0]
+                son_fiyat = h_c.iloc[-1]
+                degisim = ((son_fiyat - ilk_fiyat) / ilk_fiyat) * 100
+                
+                if abs(degisim) > 1.0: # %1 ve üzeri hareket eden her şeyi yakala
                     bulgular.append(f"{s.replace('.IS','')}: %{degisim:.2f}")
             except: continue
             
-        return "\n".join(bulgular[:25]) if bulgular else "Buralar bugün çok sakin Ayhan Bey, radara takılan olmadı."
+        return "\n".join(bulgular[:30]) if bulgular else "Şu an piyasada büyük bir dalgalanma yok Ayhan Bey."
     except Exception as e:
         return f"Veri hatası: {str(e)}"
 
 @bot.message_handler(commands=['tara', 'Tara'])
 def handle_tara(message):
-    bot.reply_to(message, "🔍 Ayhan Bey, 300'den fazla hisseyi süzüyorum, Groq AI analizimiz de hazırlanıyor...")
-    veriler = borsa_taramasi()
+    bot.reply_to(message, "⚡ Ayhan Bey, piyasa şu an süzülüyor, canlı verileri Groq AI uzmanına aktarıyorum...")
+    veriler = borsa_taramasi_anlik()
     
     url = "https://api.groq.com/openai/v1/chat/completions"
     headers = {"Authorization": f"Bearer {GROQ_KEY}", "Content-Type": "application/json"}
     
     prompt = (
-        "Sen Ayhan Bey'in borsa koçusun. Gelen hisse verilerini bir mühendis titizliğiyle yorumla. "
-        "Sektörlere değin, akşam sohbeti samimiyetinde eğitim ver ve mutlaka yarına dair bir teknik tüyo ekle."
+        "Sen Ayhan Bey'in 7/24 piyasa danışmanısın. Şu anki canlı verileri analiz et. "
+        "Kısa, öz ve teknik konuş. Mühendis Ayhan Bey'e şu anki piyasa havasını, "
+        "hisselerin neden hareketlendiğini anlık bir raporla sun. Bekleme yok, tam gaz analiz!"
     )
     
     data = {
         "model": "llama-3.1-8b-instant",
         "messages": [
             {"role": "system", "content": prompt},
-            {"role": "user", "content": f"BIST Radar:\n{veriler}"}
+            {"role": "user", "content": f"Canlı BIST Verileri:\n{veriler}"}
         ]
     }
     
     try:
         r = requests.post(url, headers=headers, json=data, timeout=30)
         analiz = r.json()['choices'][0]['message']['content']
-        bot.send_message(message.chat.id, f"🎯 **OPTIMA AKŞAM ANALİZİ**\n\n{analiz}")
+        bot.send_message(message.chat.id, f"🚀 **ANLIK OPTİMA ANALİZİ**\n\n{analiz}")
     except:
-        bot.send_message(message.chat.id, f"AI meşgul ama veriler burada:\n\n{veriler}")
+        bot.send_message(message.chat.id, f"AI bağlantısı yoğun ama sıcak veriler şunlar:\n\n{veriler}")
 
 @app.route(f'/{TOKEN}', methods=['POST'])
 def webhook():
