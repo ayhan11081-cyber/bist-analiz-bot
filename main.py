@@ -10,7 +10,7 @@ TOKEN = os.environ.get("TELEGRAM_TOKEN", "").strip()
 GROQ_KEY = os.environ.get("GROQ_API_KEY", "").strip()
 RENDER_URL = "https://bist-analiz-bot-3z19.onrender.com"
 
-# 420 HİSSELİK LİSTENİN TAMAMI (Buraya listenizin tamamını ekleyebilirsiniz)
+# 422 HİSSELİK LİSTENİN TAMAMI
 ALL_HISSES = [
     "THYAO","ASELS","EREGL","KCHOL","TUPRS","SISE","AKBNK","BIMAS","GARAN","SAHOL","ISCTR","YKBNK","ENKAI","EKGYO","PGSUS","FROTO","TOASO","ARCLK","PETKM","KRDMD","ASTOR","SASA","HEKTS","KONTR","SMRTG","EUPWR","ALARK","KOZAL","KOZAA","IPEKE","ODAS","ZOREN","CANTE","DOHOL","TKFEN",
     "MGROS","SOKM","AEFES","CCOLA","DOAS","TTKOM","TCELL","VESTL","VESBE","OTKAR","TMSN","KORDS","BRISA","GUBRF","BAGFS","EGEEN","BFREN","ASUZU","KARSN","CEMTS","PARSN","BUCIM","AKCNS","NUHCM","AFYON","OYAKC","KONYA","GOLTS","ASLAN","BOBET","QUAGR","BIENP","KAYSE","CWENE","ALFAS",
@@ -27,36 +27,62 @@ app = Flask(__name__)
 
 def teknik_hesapla(df):
     try:
+        # RSI HESABI
         delta = df['Close'].diff()
         gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
         loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
         rsi = 100 - (100 / (1 + (gain / loss)))
+        
+        # MFI HESABI
         tp = (df['High'] + df['Low'] + df['Close']) / 3
         mf = tp * df['Volume']
         pos_mf = mf.where(tp > tp.shift(1), 0).rolling(window=14).sum()
         neg_mf = mf.where(tp < tp.shift(1), 0).rolling(window=14).sum()
         mfi = 100 - (100 / (1 + (pos_mf / neg_mf)))
-        return rsi.iloc[-1], mfi.iloc[-1]
-    except: return 50, 50
+        
+        # HACİM PATLAMASI FİLTRESİ
+        avg_vol = df['Volume'].tail(20).mean()
+        cur_vol = df['Volume'].iloc[-1]
+        hacim_patlamasi = cur_vol > (avg_vol * 1.5)
+        
+        return rsi.iloc[-1], mfi.iloc[-1], hacim_patlamasi
+    except: return 50, 50, False
 
 def groq_analiz(veriler):
     url = "https://api.groq.com/openai/v1/chat/completions"
     headers = {"Authorization": f"Bearer {GROQ_KEY}", "Content-Type": "application/json"}
-    prompt = f"Ayhan Bey için şu teknik hisse grubunu analiz et ve para akışına (MFI) göre strateji ver:\n{veriler}"
+    
+    prompt = f"""
+    Sen profesyonel bir Borsa İstanbul analistisin. Kullanıcın Ayhan Bey'e teknik analiz desteği veriyorsun.
+    
+    KURALLAR:
+    1. Sektörleri bilmiyorsan kesinlikle uydurma.
+    2. TRGYO, MSGYO gibi kağıtları banka sektörüyle karıştırma, bunlar GYO'dur.
+    3. RSI < 35 ise 'Aşırı Satım / Tepki Beklenebilir', RSI > 70 ise 'Aşırı Alım / Kar Satışı Gelebilir' de.
+    4. MFI > 70 ise 'Sıcak Para Girişi Güçlü' olarak yorumla.
+    5. Listede 'HACİM PATLAMASI' notu olan hisseler için 'Balina/Kurumsal Girişi Olabilir' diye uyar.
+    6. Analizlerini kısa maddeler halinde Ayhan Bey'e hitaben yap.
+
+    ANALİZ EDİLECEK VERİLER:
+    {veriler}
+    """
+    
     payload = {
         "model": "llama-3.1-8b-instant",
-        "messages": [{"role": "user", "content": prompt}]
+        "messages": [
+            {"role": "system", "content": "Deneyimli bir borsa danışmanı gibi davran."},
+            {"role": "user", "content": prompt}
+        ]
     }
     try:
         r = requests.post(url, headers=headers, json=payload, timeout=20)
         return r.json()['choices'][0]['message']['content']
-    except: return "AI bu grup için şu an yanıt veremedi."
+    except: return "AI şu an bu grup için yanıt oluşturamadı."
 
 @bot.message_handler(commands=['tara', 'Tara'])
 def handle_tara(message):
-    bot.send_message(message.chat.id, "🚀 420 Hisse Tarama Başladı. Veriler 50'şerli gruplar halinde gelecek Ayhan Bey...")
+    bot.send_message(message.chat.id, "🚀 Ayhan Bey, 422 Hisse için Hacim ve Teknik Tarama Başladı...")
     
-    # Listeyi 50'şerli gruplara böl
     chunk_size = 50
     for i in range(0, len(ALL_HISSES), chunk_size):
         chunk = ALL_HISSES[i:i + chunk_size]
@@ -67,27 +93,36 @@ def handle_tara(message):
             for s in chunk:
                 try:
                     h_data = data.xs(s + ".IS", axis=1, level=1)
-                    rsi, mfi = teknik_hesapla(h_data)
-                    if mfi > 70 or rsi < 35 or rsi > 70:
-                        grup_sonuc.append(f"{s}: RSI {rsi:.0f}, MFI {mfi:.0f}")
+                    rsi, mfi, spike = teknik_hesapla(h_data)
+                    
+                    # KRİTER: Hacim patlaması varsa VEYA RSI/MFI uçlardaysa listeye al
+                    if spike or mfi > 70 or rsi < 35 or rsi > 70:
+                        notlar = []
+                        if spike: notlar.append("🔥 HACİM PATLAMASI")
+                        if rsi < 35: notlar.append("📉 Düşük RSI")
+                        if rsi > 70: notlar.append("📈 Yüksek RSI")
+                        if mfi > 70: notlar.append("💰 Para Girişi")
+                        
+                        grup_sonuc.append(f"{s}: RSI {rsi:.0f}, MFI {mfi:.0f} [{' + '.join(notlar)}]")
                 except: continue
             
             if grup_sonuc:
                 rapor = f"📦 **GRUP {int(i/chunk_size)+1} ANALİZİ**\n\n" + "\n".join(grup_sonuc)
                 bot.send_message(message.chat.id, rapor)
-                # AI yorumu
                 ai_yorum = groq_analiz("\n".join(grup_sonuc))
                 bot.send_message(message.chat.id, f"💡 **AI STRATEJİSİ:**\n{ai_yorum}")
             
-            time.sleep(2) # Sunucuyu yormamak için kısa bekleme
+            time.sleep(2)
         except: continue
 
 @app.route(f'/{TOKEN}', methods=['POST'])
 def webhook():
-    json_string = request.get_data().decode('utf-8')
-    update = telebot.types.Update.de_json(json_string)
-    bot.process_new_updates([update])
-    return "OK", 200
+    if request.headers.get('content-type') == 'application/json':
+        json_string = request.get_data().decode('utf-8')
+        update = telebot.types.Update.de_json(json_string)
+        bot.process_new_updates([update])
+        return "OK", 200
+    return "Forbidden", 403
 
 if __name__ == "__main__":
     bot.remove_webhook()
