@@ -1,5 +1,8 @@
 pyTelegramBotAPI
 requests
 yfinance
+pandas
+pytz
 flask
 gunicorn
+apscheduler
