@@ -5,12 +5,13 @@ import time
 import datetime
 import pytz
 import pandas as pd
+import numpy as np # Teknik hesaplamalar için eklendi
 from flask import Flask, request
 from apscheduler.schedulers.background import BackgroundScheduler
 
 # --- AYARLAR ---
 TOKEN = os.environ.get("TELEGRAM_TOKEN", "").strip()
-MY_CHAT_ID = "SİZİN_TELEGRAM_ID_NUMARANIZ" # Kendi ID'nizi buraya yazın
+MY_CHAT_ID = "SİZİN_TELEGRAM_ID_NUMARANIZ" 
 RENDER_URL = "https://bist-analiz-bot-3z19.onrender.com"
 TR_TIMEZONE = pytz.timezone('Europe/Istanbul')
 
@@ -62,8 +63,13 @@ def ai_beyin(t):
 
 def teknik_hesapla(df):
     try:
-        if df is None or len(df) < 30: return None
-        close = df['Close']
+        if df is None or len(df) < 15: return None
+        # Bazı durumlarda Çoklu indirme MultiIndex döner, onu düzeltelim
+        if isinstance(df, pd.DataFrame) and 'Close' in df:
+            close = df['Close']
+        else:
+            return None
+            
         delta = close.diff()
         gain = (delta.where(delta > 0, 0)).rolling(14).mean()
         loss = (-delta.where(delta < 0, 0)).rolling(14).mean()
@@ -90,34 +96,48 @@ def tekil_sorgu(message):
 
 @bot.message_handler(commands=['tara'])
 def handle_tara(message):
-    bot.send_message(message.chat.id, "🔎 **422 Katılım Hissesi Taranıyor...** (Sinyaller birazdan gelir)")
-    chunk_size = 15
-    for i in range(0, len(KATILIM_HISSES), chunk_size):
-        chunk = KATILIM_HISSES[i:i + chunk_size]
+    bot.send_message(message.chat.id, "⚡ **Süper Hızlı Katılım Taraması Başladı...**\n422 hisse verisi paket halinde çekiliyor.")
+    try:
+        # Tüm hisseleri hazırla
+        tickers = [f"{s}.IS" for s in KATILIM_HISSES]
+        # TÜM VERİLERİ TEK SEFERDE İNDİR (En güvenli ve hızlı yol)
+        raw_data = yf.download(tickers, period="1mo", interval="1d", group_by='ticker', progress=False, timeout=60)
+        
         sinyaller = []
-        for s in chunk:
-            try:
-                h_data = yf.download(f"{s}.IS", period="6mo", interval="1d", progress=False, timeout=5)
-                t = teknik_hesapla(h_data)
+        for s in KATILIM_HISSES:
+            ticker_data = raw_data[f"{s}.IS"]
+            if not ticker_data.empty and len(ticker_data) > 14:
+                t = teknik_hesapla(ticker_data)
                 if t and (t['rsi'] < 35 or t['rsi'] > 75):
                     karar, _ = ai_beyin(t)
                     sinyaller.append(f"🔹 **{s}**: {t['fiyat']:.2f} TL -> {karar} (RSI: {t['rsi']:.0f})")
-            except: continue
+            
+            # Telegram'ı yormamak için her 15 sinyalde bir gönder
+            if len(sinyaller) >= 15:
+                bot.send_message(message.chat.id, "\n".join(sinyaller))
+                sinyaller = []
+                time.sleep(1)
+
         if sinyaller:
             bot.send_message(message.chat.id, "\n".join(sinyaller))
-        time.sleep(2)
+        else:
+            bot.send_message(message.chat.id, "✅ Tarama bitti. Şu an ekstrem sinyal (RSI dip/tepe) veren hisse bulunamadı.")
+            
+    except Exception as e:
+        bot.send_message(message.chat.id, f"❌ Tarama hatası: Sistem şu an yoğun. Lütfen 1 dakika sonra tekrar deneyin.")
 
 def sabah_taraması():
     tahmin = katilim_kahini()
     bot.send_message(MY_CHAT_ID, f"{tahmin}\n\n☀️ **GÜNAYDIN! Bugünkü Katılım Fırsatları:**")
-    # Sabah sadece en sıcak 30 hisseye hızlı bakış
-    for s in KATILIM_HISSES[:30]:
-        try:
-            d = yf.download(f"{s}.IS", period="6mo", interval="1d", progress=False)
-            t = teknik_hesapla(d)
+    # Sabah raporu için en likit ilk 40 hisseye hızlıca bak
+    try:
+        tickers = [f"{s}.IS" for s in KATILIM_HISSES[:40]]
+        data = yf.download(tickers, period="1mo", interval="1d", group_by='ticker', progress=False)
+        for s in KATILIM_HISSES[:40]:
+            t = teknik_hesapla(data[f"{s}.IS"])
             if t and t['rsi'] < 35:
                 bot.send_message(MY_CHAT_ID, f"🟢 **Fırsat:** {s} ({t['fiyat']:.2f} TL) - RSI Dipte!")
-        except: continue
+    except: pass
 
 scheduler = BackgroundScheduler(timezone=TR_TIMEZONE)
 scheduler.add_job(sabah_taraması, 'cron', day_of_week='mon-fri', hour=9, minute=0)
