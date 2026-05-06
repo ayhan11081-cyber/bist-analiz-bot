@@ -5,13 +5,13 @@ import time
 import datetime
 import pytz
 import pandas as pd
-import numpy as np # Teknik hesaplamalar için eklendi
+import numpy as np
 from flask import Flask, request
 from apscheduler.schedulers.background import BackgroundScheduler
 
 # --- AYARLAR ---
 TOKEN = os.environ.get("TELEGRAM_TOKEN", "").strip()
-MY_CHAT_ID = "SİZİN_TELEGRAM_ID_NUMARANIZ" 
+MY_CHAT_ID = "SİZİN_TELEGRAM_ID_NUMARANIZ" # Buraya kendi ID'nizi yazmayı unutmayın
 RENDER_URL = "https://bist-analiz-bot-3z19.onrender.com"
 TR_TIMEZONE = pytz.timezone('Europe/Istanbul')
 
@@ -44,16 +44,16 @@ def ai_beyin(t):
     notlar = []
     if t['fiyat'] > t['ema200']:
         skor += 2
-        notlar.append("✅ Uzun vade trend üstü.")
+        notlar.append("✅ Trend üstü.")
     else:
         skor -= 2
-        notlar.append("⚠️ Trend altında baskı var.")
+        notlar.append("⚠️ Trend altı.")
     if t['rsi'] < 30:
         skor += 4
-        notlar.append("🟢 RSI: Dip seviye (Tepki yakın).")
+        notlar.append("🟢 RSI: Dip.")
     elif t['rsi'] > 70:
         skor -= 4
-        notlar.append("🔴 RSI: Tepe seviye (Düzeltme riski).")
+        notlar.append("🔴 RSI: Tepe.")
     
     if skor >= 5: karar = "🔥 GÜÇLÜ AL"
     elif 1 <= skor < 5: karar = "✅ OLUMLU"
@@ -64,11 +64,11 @@ def ai_beyin(t):
 def teknik_hesapla(df):
     try:
         if df is None or len(df) < 15: return None
-        # Bazı durumlarda Çoklu indirme MultiIndex döner, onu düzeltelim
-        if isinstance(df, pd.DataFrame) and 'Close' in df:
-            close = df['Close']
+        # DataFrame MultiIndex ise temizle
+        if isinstance(df.columns, pd.MultiIndex):
+            close = df['Close'].iloc[:, 0]
         else:
-            return None
+            close = df['Close']
             
         delta = close.diff()
         gain = (delta.where(delta > 0, 0)).rolling(14).mean()
@@ -96,40 +96,44 @@ def tekil_sorgu(message):
 
 @bot.message_handler(commands=['tara'])
 def handle_tara(message):
-    bot.send_message(message.chat.id, "⚡ **Süper Hızlı Katılım Taraması Başladı...**\n422 hisse verisi paket halinde çekiliyor.")
-    try:
-        # Tüm hisseleri hazırla
-        tickers = [f"{s}.IS" for s in KATILIM_HISSES]
-        # TÜM VERİLERİ TEK SEFERDE İNDİR (En güvenli ve hızlı yol)
-        raw_data = yf.download(tickers, period="1mo", interval="1d", group_by='ticker', progress=False, timeout=60)
+    bot.send_message(message.chat.id, "🔎 **422 Katılım Hissesi Taranıyor...**\n(Sinyaller 20'şerli gruplar halinde gelecek)")
+    
+    chunk_size = 20
+    found_any = False
+    
+    for i in range(0, len(KATILIM_HISSES), chunk_size):
+        chunk = KATILIM_HISSES[i:i + chunk_size]
+        tickers = [f"{s}.IS" for s in chunk]
         
-        sinyaller = []
-        for s in KATILIM_HISSES:
-            ticker_data = raw_data[f"{s}.IS"]
-            if not ticker_data.empty and len(ticker_data) > 14:
-                t = teknik_hesapla(ticker_data)
-                if t and (t['rsi'] < 35 or t['rsi'] > 75):
-                    karar, _ = ai_beyin(t)
-                    sinyaller.append(f"🔹 **{s}**: {t['fiyat']:.2f} TL -> {karar} (RSI: {t['rsi']:.0f})")
+        try:
+            # Grup grup indirerek RAM'i koruyoruz
+            data = yf.download(tickers, period="1mo", interval="1d", group_by='ticker', progress=False, timeout=30)
             
-            # Telegram'ı yormamak için her 15 sinyalde bir gönder
-            if len(sinyaller) >= 15:
+            sinyaller = []
+            for s in chunk:
+                ticker_df = data[f"{s}.IS"]
+                if not ticker_df.empty and len(ticker_df) > 14:
+                    t = teknik_hesapla(ticker_df)
+                    if t and (t['rsi'] < 35 or t['rsi'] > 75):
+                        karar, _ = ai_beyin(t)
+                        sinyaller.append(f"🔹 **{s}**: {t['fiyat']:.2f} TL -> {karar} (RSI: {t['rsi']:.0f})")
+                        found_any = True
+            
+            if sinyaller:
                 bot.send_message(message.chat.id, "\n".join(sinyaller))
-                sinyaller = []
-                time.sleep(1)
-
-        if sinyaller:
-            bot.send_message(message.chat.id, "\n".join(sinyaller))
-        else:
-            bot.send_message(message.chat.id, "✅ Tarama bitti. Şu an ekstrem sinyal (RSI dip/tepe) veren hisse bulunamadı.")
             
-    except Exception as e:
-        bot.send_message(message.chat.id, f"❌ Tarama hatası: Sistem şu an yoğun. Lütfen 1 dakika sonra tekrar deneyin.")
+            time.sleep(1) # Render kilitlenmesin diye kısa mola
+            
+        except:
+            continue
+
+    if not found_any:
+        bot.send_message(message.chat.id, "✅ Tarama tamamlandı. Ekstrem sinyal bulunamadı.")
 
 def sabah_taraması():
     tahmin = katilim_kahini()
     bot.send_message(MY_CHAT_ID, f"{tahmin}\n\n☀️ **GÜNAYDIN! Bugünkü Katılım Fırsatları:**")
-    # Sabah raporu için en likit ilk 40 hisseye hızlıca bak
+    # Sabah sadece ilk 40 hisseye hızlıca bak
     try:
         tickers = [f"{s}.IS" for s in KATILIM_HISSES[:40]]
         data = yf.download(tickers, period="1mo", interval="1d", group_by='ticker', progress=False)
