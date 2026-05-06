@@ -4,7 +4,7 @@ import requests
 import yfinance as yf
 import time
 import datetime
-import pytz # Saat dilimi için
+import pytz
 from flask import Flask, request
 
 # AYARLAR
@@ -13,7 +13,7 @@ GROQ_KEY = os.environ.get("GROQ_API_KEY", "").strip()
 RENDER_URL = "https://bist-analiz-bot-3z19.onrender.com"
 TR_TIMEZONE = pytz.timezone('Europe/Istanbul')
 
-# 422 HİSSELİK LİSTENİN TAMAMI
+# 422 HİSSELİK LİSTE (Kısaltılmıştır, orijinal listenizi buraya ekleyin)
 ALL_HISSES = [
     "THYAO","ASELS","EREGL","KCHOL","TUPRS","SISE","AKBNK","BIMAS","GARAN","SAHOL","ISCTR","YKBNK","ENKAI","EKGYO","PGSUS","FROTO","TOASO","ARCLK","PETKM","KRDMD","ASTOR","SASA","HEKTS","KONTR","SMRTG","EUPWR","ALARK","KOZAL","KOZAA","IPEKE","ODAS","ZOREN","CANTE","DOHOL","TKFEN",
     "MGROS","SOKM","AEFES","CCOLA","DOAS","TTKOM","TCELL","VESTL","VESBE","OTKAR","TMSN","KORDS","BRISA","GUBRF","BAGFS","EGEEN","BFREN","ASUZU","KARSN","CEMTS","PARSN","BUCIM","AKCNS","NUHCM","AFYON","OYAKC","KONYA","GOLTS","ASLAN","BOBET","QUAGR","BIENP","KAYSE","CWENE","ALFAS",
@@ -28,22 +28,32 @@ ALL_HISSES = [
 bot = telebot.TeleBot(TOKEN, threaded=False)
 app = Flask(__name__)
 
+def piyasa_kontrol():
+    """Piyasanın açık/kapalı durumunu kontrol eder."""
+    simdi = datetime.datetime.now(TR_TIMEZONE)
+    # Hafta sonu kontrolü
+    if simdi.weekday() >= 5:
+        return "🌙 KAPALI (Hafta Sonu)"
+    # Seans saatleri kontrolü (09:55 - 18:15)
+    saat_dk = simdi.hour * 100 + simdi.minute
+    if 955 <= saat_dk <= 1815:
+        return "🚀 AÇIK (Canlı Seans)"
+    else:
+        return "🌙 KAPALI (Gece Hazırlığı)"
+
 def teknik_hesapla(df):
     try:
-        # RSI HESABI
         delta = df['Close'].diff()
         gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
         loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
         rsi = 100 - (100 / (1 + (gain / loss)))
         
-        # MFI HESABI
         tp = (df['High'] + df['Low'] + df['Close']) / 3
         mf = tp * df['Volume']
         pos_mf = mf.where(tp > tp.shift(1), 0).rolling(window=14).sum()
         neg_mf = mf.where(tp < tp.shift(1), 0).rolling(window=14).sum()
         mfi = 100 - (100 / (1 + (pos_mf / neg_mf)))
         
-        # HACİM PATLAMASI FİLTRESİ
         avg_vol = df['Volume'].tail(20).mean()
         cur_vol = df['Volume'].iloc[-1]
         hacim_patlamasi = cur_vol > (avg_vol * 1.5)
@@ -54,50 +64,46 @@ def teknik_hesapla(df):
         return rsi.iloc[-1], mfi.iloc[-1], hacim_patlamasi, anlik_fiyat, veri_tarihi
     except: return 50, 50, False, 0, "-"
 
-def groq_analiz(veriler):
+def groq_analiz(veriler, durum):
     url = "https://api.groq.com/openai/v1/chat/completions"
     headers = {"Authorization": f"Bearer {GROQ_KEY}", "Content-Type": "application/json"}
     
     prompt = f"""
-    Sen profesyonel bir Borsa İstanbul stratejistisin. Ayhan Bey için şu güncel verileri yorumla:
+    Sen profesyonel bir Borsa İstanbul stratejistisin. Ayhan Bey için şu verileri yorumla. 
+    Piyasa şu an {durum}.
     
-    SİNYAL REHBERİ:
-    - 🟢 (AL): RSI 35 altındaysa 'ALIM UYGUN' yorumu yap.
-    - 🔴 (SAT): RSI 70 üzerindeyse 'KAR SATIŞI RİSKİ' uyarısı yap.
-    - 🔵 (İZLE): Trendi takip etmesini söyle.
+    TALİMATLAR:
+    - Piyasa KAPALI ise "Yarın için hazırlık listesi" olarak yorum yap.
+    - Piyasa AÇIK ise "Canlı seans hareketleri" olarak anlık yorum yap.
+    - 🟢 (AL), 🔴 (SAT), 🔵 (İZLE) mantığına sadık kal.
+    - 🔥 HACİM PATLAMASI olanları özellikle belirt.
     
-    STRATEJİ KURALLARI:
-    1. '🔥 HACİM PATLAMASI' olan hisselere odaklan.
-    2. Analiz sonunda Ayhan Bey'e kısa bir piyasa özeti geç.
-    3. Sektör uydurma.
-
     VERİLER:
     {veriler}
     """
     
     payload = {
         "model": "llama-3.1-8b-instant",
-        "messages": [
-            {"role": "system", "content": "Stratejik borsa danışmanı."},
-            {"role": "user", "content": prompt}
-        ],
+        "messages": [{"role": "user", "content": prompt}],
         "temperature": 0.2
     }
     try:
         r = requests.post(url, headers=headers, json=payload, timeout=20)
         return r.json()['choices'][0]['message']['content']
-    except: return "Analiz şu an yapılamıyor."
+    except: return "AI şu an yorum yapamıyor."
 
 @bot.message_handler(commands=['tara', 'Tara'])
 def handle_tara(message):
+    durum = piyasa_kontrol()
     simdi_tr = datetime.datetime.now(TR_TIMEZONE).strftime("%H:%M:%S")
-    bot.send_message(message.chat.id, f"🚀 Ayhan Bey, {simdi_tr} itibarıyla canlı tarama başlıyor...")
+    
+    # Başlık mesajı
+    bot.send_message(message.chat.id, f"{durum}\n🕒 Analiz Saati: {simdi_tr}\n🚀 Ayhan Bey, tarama başlatıldı...")
     
     chunk_size = 50
     for i in range(0, len(ALL_HISSES), chunk_size):
         chunk = ALL_HISSES[i:i + chunk_size]
         try:
-            # ignore_tz=True ekleyerek zaman çelişkilerini önledik
             data = yf.download([s + ".IS" for s in chunk], period="1mo", interval="1d", progress=False, ignore_tz=True)
             grup_sonuc = []
             son_veri_tarihi = "-"
@@ -108,19 +114,19 @@ def handle_tara(message):
                     rsi, mfi, spike, fiyat, tarih = teknik_hesapla(h_data)
                     son_veri_tarihi = tarih
                     
-                    if rsi < 35: durum = "🟢"
-                    elif rsi > 70: durum = "🔴"
-                    else: durum = "🔵"
+                    if rsi < 35: d = "🟢"
+                    elif rsi > 70: d = "🔴"
+                    else: d = "🔵"
                     
                     if spike or mfi > 70 or rsi < 35 or rsi > 70:
-                        notlar = " 🔥 HACİM PATLAMASI" if spike else ""
-                        grup_sonuc.append(f"{durum} {s}: {fiyat:.2f} TL | RSI {rsi:.0f} {notlar}")
+                        ek = " 🔥 HACİM PATLAMASI" if spike else ""
+                        grup_sonuc.append(f"{d} {s}: {fiyat:.2f} TL | RSI {rsi:.0f}{ek}")
                 except: continue
             
             if grup_sonuc:
                 rapor = f"📦 **GRUP {int(i/50)+1}** (Veri: {son_veri_tarihi})\n\n" + "\n".join(grup_sonuc)
                 bot.send_message(message.chat.id, rapor)
-                bot.send_message(message.chat.id, f"💡 **AI STRATEJİSİ:**\n{groq_analiz(rapor)}")
+                bot.send_message(message.chat.id, f"💡 **STRATEJİ:**\n{groq_analiz(rapor, durum)}")
             
             time.sleep(2)
         except: continue
