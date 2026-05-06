@@ -52,16 +52,20 @@ def groq_analiz(veriler):
     url = "https://api.groq.com/openai/v1/chat/completions"
     headers = {"Authorization": f"Bearer {GROQ_KEY}", "Content-Type": "application/json"}
     
+    # GELİŞTİRİLMİŞ AI SİSTEMİ TALİMATLARI
     prompt = f"""
-    Sen profesyonel bir Borsa İstanbul analistisin. Kullanıcın Ayhan Bey'e teknik analiz desteği veriyorsun.
+    Sen profesyonel bir Borsa İstanbul stratejistisin. Ayhan Bey için şu teknik borsa verilerini yorumla:
     
-    KURALLAR:
-    1. Sektörleri bilmiyorsan kesinlikle uydurma.
-    2. TRGYO, MSGYO gibi kağıtları banka sektörüyle karıştırma, bunlar GYO'dur.
-    3. RSI < 35 ise 'Aşırı Satım / Tepki Beklenebilir', RSI > 70 ise 'Aşırı Alım / Kar Satışı Gelebilir' de.
-    4. MFI > 70 ise 'Sıcak Para Girişi Güçlü' olarak yorumla.
-    5. Listede 'HACİM PATLAMASI' notu olan hisseler için 'Balina/Kurumsal Girişi Olabilir' diye uyar.
-    6. Analizlerini kısa maddeler halinde Ayhan Bey'e hitaben yap.
+    SİNYAL REHBERİ:
+    - 🟢 (AL): RSI 35 altındaysa 'ALIM UYGUN / TEPKİ GELEBİLİR' olarak yorumla.
+    - 🔴 (SAT): RSI 70 üzerindeyse 'SATIŞ RİSKİ / KAR SATIŞI' olarak yorumla.
+    - 🔵 (İZLE): RSI 35-70 arasındaysa 'BEKLE / TRENDİ TAKİP ET' olarak yorumla.
+    
+    STRATEJİ KURALLARI:
+    1. Sektörleri bilmiyorsan uydurma. GYO'ları bankalarla karıştırma.
+    2. '🔥 HACİM PATLAMASI' olan hisseler için 'Balina/Kurumsal Girişi Olabilir' uyarısı yap.
+    3. MFI > 70 ise para girişinin çok güçlü olduğunu belirt.
+    4. Analizlerini Ayhan Bey'e hitaben, kısa ve vurucu maddelerle yap.
 
     ANALİZ EDİLECEK VERİLER:
     {veriler}
@@ -70,18 +74,19 @@ def groq_analiz(veriler):
     payload = {
         "model": "llama-3.1-8b-instant",
         "messages": [
-            {"role": "system", "content": "Deneyimli bir borsa danışmanı gibi davran."},
+            {"role": "system", "content": "Stratejik borsa danışmanı."},
             {"role": "user", "content": prompt}
-        ]
+        ],
+        "temperature": 0.2 # Daha kararlı ve tutarlı cevaplar için
     }
     try:
         r = requests.post(url, headers=headers, json=payload, timeout=20)
         return r.json()['choices'][0]['message']['content']
-    except: return "AI şu an bu grup için yanıt oluşturamadı."
+    except: return "AI Analizi şu an oluşturulamadı Ayhan Bey."
 
 @bot.message_handler(commands=['tara', 'Tara'])
 def handle_tara(message):
-    bot.send_message(message.chat.id, "🚀 Ayhan Bey, 422 Hisse için Hacim ve Teknik Tarama Başladı...")
+    bot.send_message(message.chat.id, "🚀 Ayhan Bey, Renkli ve Hacim Odaklı Analiz Başladı (422 Hisse)...")
     
     chunk_size = 50
     for i in range(0, len(ALL_HISSES), chunk_size):
@@ -95,25 +100,30 @@ def handle_tara(message):
                     h_data = data.xs(s + ".IS", axis=1, level=1)
                     rsi, mfi, spike = teknik_hesapla(h_data)
                     
-                    # KRİTER: Hacim patlaması varsa VEYA RSI/MFI uçlardaysa listeye al
+                    # RENKLENDİRME VE DURUM BELİRLEME
+                    if rsi < 35:
+                        durum_emoji = "🟢"
+                    elif rsi > 70:
+                        durum_emoji = "🔴"
+                    else:
+                        durum_emoji = "🔵"
+                    
+                    # KRİTER: Radara girenleri listeye ekle
                     if spike or mfi > 70 or rsi < 35 or rsi > 70:
-                        notlar = []
-                        if spike: notlar.append("🔥 HACİM PATLAMASI")
-                        if rsi < 35: notlar.append("📉 Düşük RSI")
-                        if rsi > 70: notlar.append("📈 Yüksek RSI")
-                        if mfi > 70: notlar.append("💰 Para Girişi")
-                        
-                        grup_sonuc.append(f"{s}: RSI {rsi:.0f}, MFI {mfi:.0f} [{' + '.join(notlar)}]")
+                        ek_bilgi = " 🔥 HACİM PATLAMASI" if spike else ""
+                        grup_sonuc.append(f"{durum_emoji} {s}: RSI {rsi:.0f}, MFI {mfi:.0f}{ek_bilgi}")
                 except: continue
             
             if grup_sonuc:
                 rapor = f"📦 **GRUP {int(i/chunk_size)+1} ANALİZİ**\n\n" + "\n".join(grup_sonuc)
                 bot.send_message(message.chat.id, rapor)
-                ai_yorum = groq_analiz("\n".join(grup_sonuc))
-                bot.send_message(message.chat.id, f"💡 **AI STRATEJİSİ:**\n{ai_yorum}")
+                # Yapay Zeka Yorumu
+                ai_yorum = groq_analiz(rapor)
+                bot.send_message(message.chat.id, f"💡 **STRATEJİ:**\n{ai_yorum}")
             
-            time.sleep(2)
-        except: continue
+            time.sleep(2) # Hız sınırına takılmamak için
+        except Exception as e:
+            continue
 
 @app.route(f'/{TOKEN}', methods=['POST'])
 def webhook():
@@ -126,5 +136,6 @@ def webhook():
 
 if __name__ == "__main__":
     bot.remove_webhook()
+    time.sleep(1)
     bot.set_webhook(url=f"{RENDER_URL}/{TOKEN}")
     app.run(host='0.0.0.0', port=int(os.environ.get("PORT", 10000)))
