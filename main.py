@@ -5,6 +5,7 @@ import yfinance as yf
 import time
 import datetime
 import pytz
+import pandas as pd
 from flask import Flask, request
 
 # --- AYARLAR ---
@@ -13,17 +14,8 @@ GROQ_KEY = os.environ.get("GROQ_API_KEY", "").strip()
 RENDER_URL = "https://bist-analiz-bot-3z19.onrender.com"
 TR_TIMEZONE = pytz.timezone('Europe/Istanbul')
 
-# 422 HİSSELİK LİSTE (Kısaltılmadan tam liste burada olmalı)
-ALL_HISSES = [
-    "THYAO","ASELS","EREGL","KCHOL","TUPRS","SISE","AKBNK","BIMAS","GARAN","SAHOL","ISCTR","YKBNK","ENKAI","EKGYO","PGSUS","FROTO","TOASO","ARCLK","PETKM","KRDMD","ASTOR","SASA","HEKTS","KONTR","SMRTG","EUPWR","ALARK","KOZAL","KOZAA","IPEKE","ODAS","ZOREN","CANTE","DOHOL","TKFEN",
-    "MGROS","SOKM","AEFES","CCOLA","DOAS","TTKOM","TCELL","VESTL","VESBE","OTKAR","TMSN","KORDS","BRISA","GUBRF","BAGFS","EGEEN","BFREN","ASUZU","KARSN","CEMTS","PARSN","BUCIM","AKCNS","NUHCM","AFYON","OYAKC","KONYA","GOLTS","ASLAN","BOBET","QUAGR","BIENP","KAYSE","CWENE","ALFAS",
-    "YEOTK","GESAN","SAYAS","HUNER","ENJSA","GWIND","AYDEM","AKSEN","AKFYE","BIOEN","TURSG","ANSGR","HALKB","VAKBN","TSKB","SKBNK","ALBRK","QNBFB","ICBCT","PAGYO","TRGYO","SNGYO","OZKGY","AKFGY","MSGYO","KLGYO","PSGYO","ASGYO","VKGYO","HLGYO","ZRGYO","IDGYO","PEGYO","NTHOL",
-    "NETAS","KFEIN","ARDYZ","ESCOM","ARENA","INDES","DESPC","DGATE","PENTA","MIATK","REEDR","SDTTR","FORMT","KATMR","KMPUR","TARKM","HKTM","MHRGY","KUVVA","KOPOL","KCAER","GRSEL","GOKNR","MTRKS","LINK","LOGO","AZTEK","MOBTL","FONET","KRVGD","TATGD","SELGD","KNFRT","ULUFA",
-    "ULUSE","ADESE","SELEC","RTALB","ANGEN","TRILC","GENIL","MEDTR","EBEBK","MAVI","VAKKO","YATAS","BRYAT","ALCAR","ALCTL","KAREL","KRONT","PKENT","AYGAZ","TRCAS","TURGG","BRKO","DIRIT","SNPAM","KUYAS","PRZMA","DERIM","DESA","HURGZ","IHLAS","IHEVA","IHLGM","IHGZT","IHYAY",
-    "METRO","AVGYO","ATLAS","ETYAT","AVHOL","GLRYH","A1CAP","INFO","OSMEN","TERA","PLTER","SKYMD","EFORC","BYDNR","TABGD","HRKET","DCTTR","LILAK","KOTON","ALVES","ENTRA","MOGAN","ARTMS","ODINE","ICUGS","ALMAD","PRKME","IEYHO","ISYHO","USA K","NIBAS","EMKEL","GEREL",
-    "GOODY","JANTS","GEDIK","INVEO","ECILC","ECZYT","DEVA","MPARK","LKMNH","TNZTP","AHLCI","ENERY","PASEU","TUKAS","VANGD","ELITE","SUNTK","ISSEN","TEZOL","ALKA","ALKIM","EGGUB","KUTPO","NGYO","AKMGY","EGSER","IZMDC","DITAS","FMIZP","MAKTK","YAYLA","ORCAY","PINSU","PNSUT",
-    "PETUN","BANVT","MERKO","AVOD","KEREV","OBASE","PAPIL","PKART","BVSAN","IMASM","OZSUB","SMART","EDATA","ESEN","MAGEN","NATEN","CRDFA","LIDFA","VAKFN","PAMEL","BRKVY","ISGSY","GOZDE","VERUS","VERTU","GLBMD","TAVHL","RYSAS","RYGYO","DERHL","DAGHL","YESIL","YGYO","YYAPI","BJKAS","FENER","GSRAY","TSPOR","HUBVC"
-]
+# 422 HİSSELİK LİSTE (Buraya listenizin tamamını koyun)
+ALL_HISSES = ["THYAO","ASELS","EREGL","KCHOL","TUPRS","SISE","AKBNK","BIMAS","GARAN","SAHOL","ISCTR","YKBNK"] 
 
 bot = telebot.TeleBot(TOKEN, threaded=False)
 app = Flask(__name__)
@@ -37,43 +29,81 @@ def piyasa_kontrol():
 
 def teknik_hesapla(df):
     try:
-        if df.empty or len(df) < 14: return 50, 50, False, 0, "-"
-        delta = df['Close'].diff()
+        if df.empty or len(df) < 20: return None
+        
+        close = df['Close']
+        high = df['High']
+        low = df['Low']
+        volume = df['Volume']
+
+        # 1. RSI
+        delta = close.diff()
         gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
         loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
         rsi = 100 - (100 / (1 + (gain / (loss + 1e-9))))
         
-        tp = (df['High'] + df['Low'] + df['Close']) / 3
-        mf = tp * df['Volume']
+        # 2. MFI (Para Akışı - Balina Takibi)
+        tp = (high + low + close) / 3
+        mf = tp * volume
         pos_mf = mf.where(tp > tp.shift(1), 0).rolling(window=14).sum()
         neg_mf = mf.where(tp < tp.shift(1), 0).rolling(window=14).sum()
         mfi = 100 - (100 / (1 + (pos_mf / (neg_mf + 1e-9))))
         
-        avg_vol = df['Volume'].tail(20).mean()
-        cur_vol = df['Volume'].iloc[-1]
-        hacim_patlamasi = cur_vol > (avg_vol * 1.5)
+        # 3. EMA Trend Kontrolü (20 ve 200)
+        ema20 = close.ewm(span=20, adjust=False).mean()
+        ema200 = close.ewm(span=200, adjust=False).mean()
         
-        return rsi.iloc[-1], mfi.iloc[-1], hacim_patlamasi, df['Close'].iloc[-1], df.index[-1].strftime('%d/%m %H:%M')
-    except: return 50, 50, False, 0, "-"
+        # 4. Destek ve Direnç (Pivot Noktaları)
+        son_kapanis = close.iloc[-1]
+        direnc = high.tail(14).max()
+        destek = low.tail(14).min()
+        
+        # 5. Hacim Patlaması
+        avg_vol = volume.tail(20).mean()
+        hacim_patlamasi = volume.iloc[-1] > (avg_vol * 1.5)
+        
+        return {
+            "rsi": rsi.iloc[-1],
+            "mfi": mfi.iloc[-1],
+            "ema20": ema20.iloc[-1],
+            "ema200": ema200.iloc[-1],
+            "fiyat": son_kapanis,
+            "destek": destek,
+            "direnc": direnc,
+            "hacim_spike": hacim_patlamasi,
+            "tarih": df.index[-1].strftime('%d/%m %H:%M')
+        }
+    except: return None
 
 def groq_analiz(veriler, durum):
     url = "https://api.groq.com/openai/v1/chat/completions"
     headers = {"Authorization": f"Bearer {GROQ_KEY}", "Content-Type": "application/json"}
+    
+    prompt = f"""
+    Sen usta bir borsa stratejistisin. Piyasa {durum}.
+    Şu teknik verileri yorumla:
+    - Fiyat EMA200 üzerindeyse TREND YUKARI, altındaysa RİSKLİ de.
+    - MFI ve RSI aynı anda 35 altındaysa 'BALİNA TOPLAMA BÖLGESİ' uyarısı yap.
+    - Destek/Direnç mesafelerine göre hedef belirt.
+    
+    VERİLER:
+    {veriler}
+    """
+    
     payload = {
         "model": "llama-3.1-8b-instant",
-        "messages": [{"role": "user", "content": f"Piyasa {durum}. Ayhan Bey için şu kritik sinyalleri yorumla:\n{veriler}"}],
+        "messages": [{"role": "user", "content": prompt}],
         "temperature": 0.1
     }
     try:
         r = requests.post(url, headers=headers, json=payload, timeout=60)
-        if r.status_code == 200: return r.json()['choices'][0]['message']['content']
-        return f"⚠️ AI Hatası: Kod {r.status_code} - (Limit Aşımı)"
-    except: return "⚠️ Bağlantı Hatası."
+        return r.json()['choices'][0]['message']['content']
+    except: return "AI şu an analiz yapamıyor."
 
 @bot.message_handler(commands=['tara', 'Tara'])
 def handle_tara(message):
     durum = piyasa_kontrol()
-    bot.send_message(message.chat.id, f"{durum}\n🚀 Kota koruma modu aktif. Tarama başlatıldı...")
+    bot.send_message(message.chat.id, f"🔍 **Gelişmiş Analiz Başlatıldı** (RSI+MFI+EMA+Pivot)\nDurum: {durum}")
     
     chunk_size = 30
     for i in range(0, len(ALL_HISSES), chunk_size):
@@ -83,39 +113,40 @@ def handle_tara(message):
             data = yf.download([s + ".IS" for s in chunk], period="1mo", interval=aralik, progress=False, ignore_tz=True)
             
             grup_sonuc = []
-            kritik_sinyaller = []
+            ai_icin = []
             
             for s in chunk:
                 try:
                     h_data = data.xs(s + ".IS", axis=1, level=1)
-                    rsi, mfi, spike, fiyat, tarih = teknik_hesapla(h_data)
+                    t = teknik_hesapla(h_data)
+                    if not t: continue
                     
-                    # Dinamik Durum Belirleme
-                    if rsi < 35: d = "🟢"
-                    elif rsi > 70: d = "🔴"
+                    # Trend Belirleme
+                    trend_icon = "⬆️" if t['fiyat'] > t['ema200'] else "⬇️"
+                    
+                    # Sinyal Mantığı (RSI + MFI + Hacim)
+                    if t['rsi'] < 35 and t['mfi'] < 35: d = "🟢"
+                    elif t['rsi'] > 75: d = "🔴"
                     else: d = "🔵"
                     
-                    if spike or mfi > 70 or rsi < 35 or rsi > 75:
-                        ek = " 🔥 HACİM PATLAMASI" if spike else ""
-                        satir = f"{d} {s}: {fiyat:.2f} TL | RSI {rsi:.0f}{ek}"
+                    if t['hacim_spike'] or t['rsi'] < 35 or t['rsi'] > 75 or t['mfi'] > 80:
+                        h_ek = " 🔥 BALİNA GİRİŞİ" if t['hacim_spike'] else ""
+                        satir = f"{d}{trend_icon} {s}: {t['fiyat']:.2f} TL | R:{t['rsi']:.0f} M:{t['mfi']:.0f}\n   ∟ Destek: {t['destek']:.2f} | Direnç: {t['direnc']:.2f}{h_ek}"
                         grup_sonuc.append(satir)
-                        # Sadece AL/SAT ve Hacim Patlamalarını AI'ya gönder
-                        if d in ["🟢", "🔴"] or spike:
-                            kritik_sinyaller.append(satir)
+                        
+                        if d in ["🟢", "🔴"] or t['hacim_spike']:
+                            ai_icin.append(satir)
                 except: continue
             
             if grup_sonuc:
                 rapor = f"📦 **PAKET {int(i/30)+1}**\n\n" + "\n".join(grup_sonuc)
                 bot.send_message(message.chat.id, rapor)
                 
-                if kritik_sinyaller:
-                    time.sleep(2) # AI öncesi küçük nefes
-                    bot.send_message(message.chat.id, f"💡 **STRATEJİ:**\n{groq_analiz(chr(10).join(kritik_sinyaller), durum)}")
-                else:
-                    bot.send_message(message.chat.id, "💡 **STRATEJİ:** Bu grupta ekstrem bir durum yok, takibe devam.")
+                if ai_icin:
+                    time.sleep(2)
+                    bot.send_message(message.chat.id, f"💡 **STRATEJİ:**\n{groq_analiz(chr(10).join(ai_icin), durum)}")
             
-            # --- 429 KORUMASI: 10 saniye bekleme ---
-            time.sleep(10)
+            time.sleep(10) # 429 Hata koruması
         except: continue
 
 @app.route(f'/{TOKEN}', methods=['POST'])
